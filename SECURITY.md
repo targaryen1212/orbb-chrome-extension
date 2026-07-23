@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please report suspected vulnerabilities privately to `support@nextra.app`.
+Please report suspected vulnerabilities privately to `support@orbb.app`.
 Include the affected extension version, reproduction steps, and potential
 impact. Do not include real access tokens, private saved content, or social
 cookies in a public issue.
