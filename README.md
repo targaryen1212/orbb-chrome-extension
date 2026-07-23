@@ -1,23 +1,20 @@
 # Orbb for Chrome
 
-A Manifest V3 Chrome extension that runs in the side panel and saves into Orbb
-through `@orbb/orbit-sdk`.
+A Manifest V3 Chrome extension that runs in Chrome’s side panel and saves content to Orbb using `@orbb/orbit-sdk`.
 
-## What it supports
+## Features
 
-- QR login authorized by the Orbb mobile app. The extension receives a 30-day,
-  write-only V2 token without storing an Orbb password.
-- One-click capture of the current page.
-- Drag and drop for links, images, audio, text, and files up to 10 MB.
-- Context-menu capture for pages, links, images, and selected quotes on desktop.
-- Instagram saved posts and folders, Reddit saved posts, and X bookmarks.
-- Manual or scheduled collection every 30 minutes, hourly, every 6 hours, or
-  daily.
-- URL normalization and local deduplication before an item is sent to Orbit.
+* QR-based sign-in authorized through the Orbb mobile app
+* One-click capture of the current page
+* Drag-and-drop capture for links, images, audio, text, and files up to 10 MB
+* Context-menu capture for pages, links, images, and selected text
+* Import of Instagram saved posts and folders, Reddit saved posts, and X bookmarks
+* Manual and scheduled collection
+* URL normalization and local duplicate detection before saving
 
 ## Build
 
-Requires Node.js `>=22.13.0`.
+Requires Node.js 22.13.0 or later.
 
 ```bash
 git clone https://github.com/OWNER/orbb-chrome-extension.git
@@ -26,73 +23,40 @@ npm ci
 npm run check
 ```
 
-The build writes the standalone extension to `dist/`.
+The built extension is written to `dist/`.
 
 ## Load in Chrome
 
-Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**,
-and select the generated `dist/` directory.
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Select **Load unpacked**.
+4. Choose the generated `dist/` directory.
 
-Pin Orbb or click its toolbar icon to open the side panel.
+Pin Orbb or select its toolbar icon to open the side panel.
 
-## Backend requirement
+## Social imports
 
-The extension connects through the Orbit SDK to the Orbit service at
-`https://api.orbb.app/v2`. The service provides QR authentication, authenticated
-bookmark writes, duplicate lookup, and private media upload/finalization.
+Orbb does not request or store passwords for Instagram, Reddit, or X. When an import is started, the extension uses the session already signed in through Chrome.
 
-The Orbit service must allow the securely origin-bound
-`chrome-extension://<extension-id>` scheme.
+Social-site access is optional. The extension requests the relevant host permission only when the user enables or starts an import for that provider.
 
-The `key` in `manifest.json` is a public identity key that keeps the unpacked
-extension ID stable. It is not a private Chrome Web Store signing key and must
-not be treated by a server as proof that a client is an official build.
-Authorization still depends on explicit QR approval, scoped tokens, revocation,
-and server-side rate limits.
-
-Extension saves intentionally omit a category so V2 analysis can classify each
-item from its captured content rather than storing a generic bookmark category.
-
-## How social collection works
-
-Orbb does not ask for or store social passwords. A sync opens each provider's
-saved-items page in an inactive Chrome tab and uses the session already logged
-into that site. Instagram collection uses its logged-in saved-post web endpoint
-so folder names can be preserved; Reddit and X are read from their rendered
-saved/bookmark pages.
-
-The inactive tab is closed after collection. Chrome must be running for
-scheduled alarms to execute. Provider web endpoints and page markup can change,
-so the collectors are isolated in `src/background.ts` for maintenance. Each
-provider pass has a four-minute safety budget so a changing or unusually large
-feed cannot hold the background worker indefinitely.
-
-Social-site access is optional. Chrome requests the relevant host permission
-only when the user enables or starts an import for Instagram, Reddit, or X.
+Chrome must be running for scheduled imports to execute. Because provider websites and interfaces can change, social-import compatibility may occasionally require updates.
 
 ## Privacy and security
 
-The Orbb credential is stored in Chrome local storage, restricted to trusted
-extension contexts, and never returned in side-panel snapshots. Disconnecting
-removes the active local credential and attempts server-side revocation.
+Authentication is approved through the Orbb mobile app. The extension does not collect or store an Orbb password.
 
-See [PRIVACY.md](PRIVACY.md) for collection, transmission, retention, and
-permission details. Report vulnerabilities according to
-[SECURITY.md](SECURITY.md). Bundled dependency notices are in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The extension’s manifest contains a public key used to keep the unpacked extension ID stable. It is not a private signing key and must not be treated as proof that a client is an official build.
 
-## Repository and releases
+Disconnecting removes the locally stored Orbb credential and requests server-side revocation.
 
-Generated `dist/`, ZIP archives, vendored package tarballs, screenshots, local
-dependencies, and environment files are intentionally excluded from source
-control. Releases should be built from a tagged commit with `npm ci` followed
-by `npm run check`, and must include the project license, privacy policy, and
-third-party notices.
+For more information, see:
 
-This directory must be published as its own repository. Do not change the
-visibility of the larger `NextraHome` product repository.
+* [`PRIVACY.md`](PRIVACY.md) for data collection, transmission, retention, and permissions
+* [`SECURITY.md`](SECURITY.md) for vulnerability reporting and security details
+* [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for bundled dependency notices
 
-## Useful commands
+## Development
 
 ```bash
 npm run dev
@@ -104,4 +68,4 @@ npm run build:chrome
 
 ## License
 
-This project is open source under the [MIT License](LICENSE).
+This project is available under the MIT License.
