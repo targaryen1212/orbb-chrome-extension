@@ -1011,7 +1011,6 @@ function renderAvatar(image: HTMLImageElement, fallback: HTMLElement, photoURL: 
 }
 
 function scheduleLabel(minutes: number): string {
-  if (minutes === 1) return "Every minute";
   if (minutes === 30) return "Every 30 minutes";
   if (minutes === 60) return "Every hour";
   if (minutes === 1440) return "Every day";

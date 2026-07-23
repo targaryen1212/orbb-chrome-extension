@@ -13,7 +13,8 @@ test("keeps the side panel semantic and password-free", async () => {
   assert.match(html, /<progress id="syncProgress"/);
   assert.match(html, /<progress id="previewProgress"/);
   assert.match(html, /<progress id="dropPreviewProgress"/);
-  assert.match(html, /<option value="1">Every minute<\/option>/);
+  assert.doesNotMatch(html, /Every minute/);
+  assert.match(html, /<option value="30">Every 30 min<\/option>/);
 });
 
 test("uses semantic theme variables with dark and reduced-motion support", async () => {

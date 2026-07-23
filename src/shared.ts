@@ -12,6 +12,7 @@ import type {
 export const DEFAULT_API_BASE_URL = "https://api.orbb.app/v2";
 export const SYNC_ALARM = "orbb-social-sync";
 export const MAX_DROP_BYTES = 10 * 1024 * 1024;
+export const MIN_AUTOMATIC_SYNC_MINUTES = 30;
 
 export const DEFAULT_SETTINGS: SyncSettings = {
   enabled: false,
@@ -50,10 +51,20 @@ export interface AutomaticSyncAlarmSchedule {
 
 export function automaticSyncAlarmSchedule(settings: SyncSettings): AutomaticSyncAlarmSchedule | null {
   if (!settings.enabled) return null;
+  const frequencyMinutes = normalizeAutomaticSyncFrequency(
+    settings.frequencyMinutes,
+  );
   return {
-    delayInMinutes: settings.frequencyMinutes,
-    periodInMinutes: settings.frequencyMinutes,
+    delayInMinutes: frequencyMinutes,
+    periodInMinutes: frequencyMinutes,
   };
+}
+
+export function normalizeAutomaticSyncFrequency(minutes: number): number {
+  const frequencyMinutes = Number.isFinite(minutes)
+    ? Math.floor(minutes)
+    : DEFAULT_SETTINGS.frequencyMinutes;
+  return Math.max(MIN_AUTOMATIC_SYNC_MINUTES, frequencyMinutes);
 }
 
 export function enqueuePendingRevocation(
@@ -232,7 +243,7 @@ export function mergeStoredState(value: Partial<StoredState>): StoredState {
     settings: {
       ...DEFAULT_SETTINGS,
       ...value.settings,
-      frequencyMinutes: Math.max(1, storedFrequencyMinutes),
+      frequencyMinutes: normalizeAutomaticSyncFrequency(storedFrequencyMinutes),
       // Earlier builds silently capped providers at 100 and then 500. There is
       // no user-facing limit control, so migrate both values to unlimited.
       maxItemsPerProvider: storedMaxItems === 100 || storedMaxItems === 500

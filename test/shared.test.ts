@@ -22,13 +22,13 @@ import {
 test("uses the configured interval for both the first and recurring automatic sync", () => {
   const settings = {
     enabled: true,
-    frequencyMinutes: 1,
+    frequencyMinutes: 30,
     providers: { instagram: true, reddit: true, x: true },
     maxItemsPerProvider: 0,
   } as const;
   assert.deepEqual(automaticSyncAlarmSchedule(settings), {
-    delayInMinutes: 1,
-    periodInMinutes: 1,
+    delayInMinutes: 30,
+    periodInMinutes: 30,
   });
   assert.equal(automaticSyncAlarmSchedule({ ...settings, enabled: false }), null);
 });
@@ -126,7 +126,7 @@ test("migrates legacy sync caps to collect until the feed ends", () => {
   assert.equal(stateWithFiveHundred.settings.maxItemsPerProvider, 0);
 });
 
-test("preserves the one-minute background sync schedule", () => {
+test("migrates the removed one-minute schedule to every 30 minutes", () => {
   const state = mergeStoredState({
     settings: {
       enabled: true,
@@ -135,7 +135,11 @@ test("preserves the one-minute background sync schedule", () => {
       maxItemsPerProvider: 0,
     },
   });
-  assert.equal(state.settings.frequencyMinutes, 1);
+  assert.equal(state.settings.frequencyMinutes, 30);
+  assert.deepEqual(automaticSyncAlarmSchedule(state.settings), {
+    delayInMinutes: 30,
+    periodInMinutes: 30,
+  });
 });
 
 test("retries only failed automatic syncs when Chrome starts", () => {

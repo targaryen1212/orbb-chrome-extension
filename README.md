@@ -11,8 +11,8 @@ through `@orbb/orbit-sdk`.
 - Drag and drop for links, images, audio, text, and files up to 10 MB.
 - Context-menu capture for pages, links, images, and selected quotes on desktop.
 - Instagram saved posts and folders, Reddit saved posts, and X bookmarks.
-- Manual or scheduled collection every minute, every 30 minutes, hourly, every
-  6 hours, or daily.
+- Manual or scheduled collection every 30 minutes, hourly, every 6 hours, or
+  daily.
 - URL normalization and local deduplication before an item is sent to Orbit.
 
 ## Build

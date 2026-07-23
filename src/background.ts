@@ -10,6 +10,7 @@ import {
   PROVIDER_PAGES,
   SYNC_ALARM,
   mergeStoredState,
+  normalizeAutomaticSyncFrequency,
   normalizeSavedUrl,
   platformForUrl,
   pruneExpiredPendingRevocations,
@@ -496,7 +497,9 @@ async function updateSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
     ...state.settings,
     ...patch,
     providers: { ...state.settings.providers, ...patch.providers },
-    frequencyMinutes: Math.max(1, patch.frequencyMinutes ?? state.settings.frequencyMinutes),
+    frequencyMinutes: normalizeAutomaticSyncFrequency(
+      patch.frequencyMinutes ?? state.settings.frequencyMinutes,
+    ),
     maxItemsPerProvider: normalizeSyncLimit(patch.maxItemsPerProvider ?? state.settings.maxItemsPerProvider),
   };
   await setState(state);
