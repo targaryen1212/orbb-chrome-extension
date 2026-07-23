@@ -37,11 +37,11 @@ Pin Orbb or click its toolbar icon to open the side panel.
 
 ## Backend requirement
 
-The extension configures the Orbit SDK with the native V2 Worker at
-`https://api.orbb.app/v2`. The SDK owns QR-auth routes, authenticated bookmark
-writes, duplicate lookup, and private media upload/finalization.
+The extension connects through the Orbit SDK to the Orbit service at
+`https://api.orbb.app/v2`. The service provides QR authentication, authenticated
+bookmark writes, duplicate lookup, and private media upload/finalization.
 
-The V2 Worker must allow the securely origin-bound
+The Orbit service must allow the securely origin-bound
 `chrome-extension://<extension-id>` scheme.
 
 The `key` in `manifest.json` is a public identity key that keeps the unpacked
