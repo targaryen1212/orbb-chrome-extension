@@ -52,4 +52,4 @@ Deleting the extension removes its Chrome-managed local storage.
 
 ## Contact
 
-Privacy questions can be sent to `support@nextra.app`.
+Privacy questions can be sent to `support@orbb.app`.
