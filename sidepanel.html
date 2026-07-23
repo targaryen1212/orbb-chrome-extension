@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orbb</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand" aria-label="Orbb for Chrome">
+        <img src="icons/icon-32.png" alt="" class="brand-mark" />
+        <span>Orbb</span>
+      </div>
+      <button id="settingsButton" class="icon-button" type="button" aria-label="Open settings" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.74v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      </button>
+    </header>
+
+    <div id="feedbackBanner" class="feedback-banner" role="alert" aria-live="assertive" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5m0 3.5h.01"/></svg>
+      <p id="feedbackMessage"></p>
+      <button id="feedbackDismissButton" class="icon-button compact-icon" type="button" aria-label="Dismiss message">×</button>
+    </div>
+
+    <main>
+      <section id="loginView" class="view login-view" aria-labelledby="loginTitle">
+        <header class="view-heading login-heading">
+          <p class="overline">Orbb for Chrome</p>
+          <h1 id="loginTitle">Save anything. Find it in Orbb.</h1>
+          <p>Connect with the Orbb mobile app. Your password is never entered or stored in Chrome.</p>
+        </header>
+
+        <section id="loginStart" class="surface-card auth-card" aria-labelledby="connectTitle">
+          <div class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M8 7V5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7"/><rect x="5" y="7" width="14" height="14" rx="3"/><path d="M9 13h6m-3-3v6"/></svg>
+          </div>
+          <div>
+            <h2 id="connectTitle">Connect this browser</h2>
+            <p>Generate a one-time QR code, then approve the connection from your phone.</p>
+          </div>
+          <button id="connectButton" class="primary-button" type="button">Show login code</button>
+        </section>
+
+        <section id="qrCard" class="surface-card qr-card" aria-labelledby="qrTitle" hidden>
+          <header>
+            <p class="overline">Secure connection</p>
+            <h2 id="qrTitle">Scan with Orbb</h2>
+          </header>
+          <figure class="qr-figure">
+            <div class="qr-frame"><img id="qrImage" alt="One-time QR code for connecting Orbb to Chrome" /></div>
+            <figcaption>Keep this panel open while you approve the connection.</figcaption>
+          </figure>
+          <ol class="instruction-list">
+            <li><span>1</span><p>Open Orbb on your phone.</p></li>
+            <li><span>2</span><p>Go to Settings, then Connect.</p></li>
+            <li><span>3</span><p>Scan this code and approve Chrome.</p></li>
+          </ol>
+          <p id="authStatus" class="inline-status" role="status" aria-live="polite">Waiting for approval…</p>
+          <div class="button-stack">
+            <a id="openAppLink" class="secondary-button" href="#">Open Orbb app</a>
+            <button id="cancelLoginButton" class="text-button" type="button">Cancel login</button>
+          </div>
+        </section>
+      </section>
+
+      <section id="appView" class="view app-view" aria-labelledby="captureTitle" hidden>
+        <section class="content-section capture-section" aria-labelledby="captureTitle">
+          <header class="section-heading">
+            <div>
+              <p class="overline">Capture</p>
+              <h1 id="captureTitle">Save to Orbb</h1>
+            </div>
+            <span id="accountAvatar" class="avatar" aria-hidden="true">
+              <img id="accountAvatarImage" alt="" hidden />
+              <span id="accountAvatarFallback">O</span>
+            </span>
+          </header>
+
+          <article id="currentPageCard" class="surface-card current-page-card" aria-labelledby="currentPageTitle">
+            <span id="currentPageFavicon" class="page-favicon" aria-hidden="true">↗</span>
+            <div class="page-copy">
+              <strong id="currentPageTitle">Open a page to save it</strong>
+              <span id="currentPageHost">Chrome</span>
+              <span id="currentPageStatus" class="visually-hidden" role="status" aria-live="polite"></span>
+            </div>
+            <button id="savePageButton" class="icon-button primary-icon" type="button" aria-label="Save current page">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4.5h11v15L12 16l-5.5 3.5v-15Z"/></svg>
+            </button>
+          </article>
+
+          <button id="dropZone" class="drop-zone" type="button" aria-describedby="dropHelp">
+            <span class="drop-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 16V5m0 0L8 9m4-4 4 4"/><path d="M5 14v4.5h14V14"/></svg>
+            </span>
+            <span class="drop-copy"><strong>Drop or choose content</strong><span id="dropHelp">URLs, text, images, audio, and files up to 10 MB</span></span>
+          </button>
+          <input id="fileInput" type="file" multiple hidden />
+        </section>
+
+        <section class="content-section imports-section" aria-labelledby="importsTitle">
+          <header class="section-heading compact">
+            <div>
+              <p class="overline">Import</p>
+              <h2 id="importsTitle">Saved elsewhere</h2>
+            </div>
+            <span id="syncSummary" class="section-status" role="status" aria-live="polite">Ready</span>
+          </header>
+          <progress id="syncProgress" class="progress-bar" max="1" aria-label="Social import progress" hidden></progress>
+          <p id="syncMessage" class="inline-feedback" role="status" aria-live="polite" hidden></p>
+          <ul class="source-list" aria-label="Social import providers">
+            <li class="source-row">
+              <span class="source-mark" aria-hidden="true">Ig</span>
+              <span class="row-copy"><strong>Instagram</strong><span>Saved posts and folders</span></span>
+              <button class="secondary-button compact-button sync-button" data-provider="instagram" type="button" aria-label="Import saved posts and folders from Instagram">Import</button>
+            </li>
+            <li class="source-row">
+              <span class="source-mark" aria-hidden="true">Rd</span>
+              <span class="row-copy"><strong>Reddit</strong><span>Saved posts</span></span>
+              <button class="secondary-button compact-button sync-button" data-provider="reddit" type="button" aria-label="Import saved posts from Reddit">Import</button>
+            </li>
+            <li class="source-row">
+              <span class="source-mark" aria-hidden="true">X</span>
+              <span class="row-copy"><strong>X</strong><span>Bookmarks</span></span>
+              <button class="secondary-button compact-button sync-button" data-provider="x" type="button" aria-label="Import bookmarks from X">Import</button>
+            </li>
+          </ul>
+        </section>
+
+        <section class="content-section automation-section" aria-labelledby="automationTitle">
+          <div class="automation-copy">
+            <label id="automationTitle" for="scheduleSelect">Background collection</label>
+            <span id="automationDescription">Off — import manually</span>
+          </div>
+          <select id="scheduleSelect" aria-describedby="automationDescription">
+            <option value="0">Off</option>
+            <option value="1">Every minute</option>
+            <option value="30">Every 30 min</option>
+            <option value="60">Hourly</option>
+            <option value="360">Every 6 hours</option>
+            <option value="1440">Daily</option>
+          </select>
+          <p class="disclosure">Scheduled collection uses your existing signed-in sessions and may briefly open inactive provider tabs.</p>
+        </section>
+
+        <section class="content-section activity-section" aria-labelledby="activityTitle">
+          <header class="section-heading compact">
+            <div>
+              <p class="overline">Recent</p>
+              <h2 id="activityTitle">Activity</h2>
+            </div>
+            <button id="clearActivityButton" class="text-button" type="button">Clear activity</button>
+          </header>
+          <ol id="activityList" class="activity-list" aria-label="Latest eight activity items"></ol>
+          <div id="emptyActivity" class="empty-state" role="status">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h10v15H7z"/><path d="M9.5 9h5m-5 3h5m-5 3H13"/></svg>
+            <h3>No activity yet</h3>
+            <p>Save a page or import social saves to see your latest eight results here.</p>
+          </div>
+        </section>
+      </section>
+
+      <section id="syncPreviewView" class="view preview-view" aria-labelledby="previewTitle" hidden>
+        <header class="view-toolbar">
+          <button id="previewBackButton" class="back-button" type="button">← Back</button>
+          <span>Review import</span>
+        </header>
+        <div class="preview-heading">
+          <div>
+            <h1 id="previewTitle">Captured saves</h1>
+            <p id="previewSummary" role="status" aria-live="polite">Review what Orbb found before saving.</p>
+          </div>
+          <button id="previewToggleButton" class="text-button" type="button">Clear all</button>
+        </div>
+        <fieldset id="previewList" class="preview-list" aria-labelledby="previewTitle"></fieldset>
+        <div class="preview-action-bar">
+          <progress id="previewProgress" class="progress-bar" max="1" aria-label="Saving selected imports" hidden></progress>
+          <p id="previewActionStatus" class="action-status" role="status" aria-live="polite"></p>
+          <button id="previewSaveButton" class="primary-button" type="button">Save selected</button>
+        </div>
+      </section>
+
+      <section id="dropPreviewView" class="view preview-view" aria-labelledby="dropPreviewTitle" hidden>
+        <header class="view-toolbar">
+          <button id="dropPreviewBackButton" class="back-button" type="button">← Back</button>
+          <span>Review capture</span>
+        </header>
+        <div class="preview-heading">
+          <div>
+            <h1 id="dropPreviewTitle">Ready to save</h1>
+            <p id="dropPreviewSummary" role="status" aria-live="polite">Review this content before adding it to Orbb.</p>
+          </div>
+        </div>
+        <div id="dropPreviewList" class="drop-preview-list"></div>
+        <div class="preview-action-bar">
+          <progress id="dropPreviewProgress" class="progress-bar" max="1" aria-label="Saving captured content" hidden></progress>
+          <p id="dropPreviewActionStatus" class="action-status" role="status" aria-live="polite"></p>
+          <button id="dropPreviewSaveButton" class="primary-button" type="button">Save to Orbb</button>
+        </div>
+      </section>
+
+      <section id="settingsView" class="view settings-view" aria-labelledby="settingsTitle" hidden>
+        <header class="view-toolbar">
+          <button id="settingsBackButton" class="back-button" type="button">← Back</button>
+          <span>Settings</span>
+        </header>
+        <header class="view-heading settings-heading">
+          <p class="overline">Chrome capture</p>
+          <h1 id="settingsTitle">Settings</h1>
+        </header>
+
+        <fieldset class="settings-group settings-list">
+          <legend>Include in background collection</legend>
+          <label class="toggle-row"><span class="row-copy"><strong>Instagram</strong><small>Saved posts and folders</small></span><input id="instagramToggle" type="checkbox" /></label>
+          <label class="toggle-row"><span class="row-copy"><strong>Reddit</strong><small>Saved posts</small></span><input id="redditToggle" type="checkbox" /></label>
+          <label class="toggle-row"><span class="row-copy"><strong>X</strong><small>Bookmarks</small></span><input id="xToggle" type="checkbox" /></label>
+        </fieldset>
+
+        <section class="settings-group account-group" aria-labelledby="accountTitle">
+          <h2 id="accountTitle">Connected account</h2>
+          <div class="account-row">
+            <span id="settingsAvatar" class="avatar" aria-hidden="true">
+              <img id="settingsAvatarImage" alt="" hidden />
+              <span id="settingsAvatarFallback">O</span>
+            </span>
+            <span class="row-copy"><strong id="settingsName">Orbb</strong><small id="settingsEmail">Connected</small></span>
+          </div>
+          <button id="signOutButton" class="secondary-button danger-button" type="button">Disconnect Chrome</button>
+          <p class="setting-help">Disconnecting removes access from this browser. If revocation is interrupted, Chrome retries it later without showing or reusing the token.</p>
+        </section>
+
+        <section class="privacy-note" aria-labelledby="privacyTitle">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5.5 6v5c0 4.3 2.7 7.8 6.5 10 3.8-2.2 6.5-5.7 6.5-10V6L12 3Z"/><path d="m9.5 12 1.7 1.7 3.5-4"/></svg>
+          <div><h2 id="privacyTitle">Private by design</h2><p>Orbb never stores your Instagram, Reddit, or X password. Collection uses the sessions already open in Chrome and saves captured content privately to your Orbb account.</p></div>
+        </section>
+
+        <footer class="orbit-attribution" aria-label="Technology attribution">
+          <span class="orbit-mark" aria-hidden="true"></span>
+          <span>Built on <strong>Orbit</strong></span>
+        </footer>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

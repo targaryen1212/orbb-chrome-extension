@@ -1,0 +1,13 @@
+node_modules/
+dist/
+releases/
+vendor/
+artifacts/
+.DS_Store
+*.zip
+*.tgz
+.env
+.env.*
+!.env.example
+Screenshot *.jpg
+Screenshot *.png
