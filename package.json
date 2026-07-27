@@ -19,7 +19,7 @@
     "package:release": "npm run check:public && npm run check && node scripts/package-release.mjs"
   },
   "dependencies": {
-    "@orbb/orbit-sdk": "0.3.4",
+    "@orbb/orbit-sdk": "0.4.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

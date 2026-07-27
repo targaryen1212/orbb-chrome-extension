@@ -18,8 +18,8 @@ const [packageJson, manifest, readme] = await Promise.all([
 if (!packageJson.license || packageJson.license === "UNLICENSED") {
   failures.push("Set package.json license to the selected open-source license.");
 }
-if (packageJson.dependencies?.["@orbb/orbit-sdk"] !== "0.3.4") {
-  failures.push("Use the reviewed public @orbb/orbit-sdk@0.3.4 dependency.");
+if (packageJson.dependencies?.["@orbb/orbit-sdk"] !== "0.4.0") {
+  failures.push("Use the reviewed public @orbb/orbit-sdk@0.4.0 dependency.");
 }
 if (/\/Users\/|[A-Za-z]:\\\\Users\\\\/.test(readme)) {
   failures.push("README contains a machine-specific home directory.");
