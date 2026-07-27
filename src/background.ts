@@ -7,6 +7,7 @@ import {
   enqueuePendingRevocation,
   instagramSavedPageForUsername,
   isSocialPostUrl,
+  jitteredDelayMs,
   PROVIDER_ORIGINS,
   PROVIDER_PAGES,
   SYNC_ALARM,
@@ -66,9 +67,25 @@ chrome.action.onClicked.addListener((tab) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === SYNC_ALARM) {
-    void startupRecovery.then(() => runAutomaticSync());
+    void startupRecovery.then(() => runScheduledSync());
   }
 });
+
+/**
+ * Runs a scheduled sync, then books the next one at a fresh random offset.
+ *
+ * The alarm is one-shot by design, so rescheduling has to happen even when the
+ * run throws — otherwise a single failure would end automatic collection.
+ */
+async function runScheduledSync(): Promise<void> {
+  try {
+    await runAutomaticSync();
+  } catch {
+    // runAutomaticSync already records the failure in state and activity.
+  } finally {
+    await restoreAlarm();
+  }
+}
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   void handleContextMenu(info, tab);
@@ -640,7 +657,7 @@ async function saveSyncPreview(
     state = await getState();
     state.sync.completed = saved + skipped + failed;
     await setState(state);
-    await delay(150);
+    await delay(jitteredDelayMs(150));
   }
 
   const result = { total: items.length, saved, skipped, failed };
@@ -728,7 +745,7 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
           const progress = await getState();
           progress.sync.completed += 1;
           await setState(progress);
-          await delay(250);
+          await delay(jitteredDelayMs(250));
         }
         if (!syncCancellationRequested) {
           await markProviderSynced(provider, items.map((item) => item.url));
@@ -884,7 +901,7 @@ async function collectProvider(provider: SocialProvider, limit: number, stopUrls
       await waitForTab(tab.id, 30_000);
       throwIfSyncCancelled();
     }
-    await delay(provider === "instagram" ? 1800 : 2800);
+    await delay(jitteredDelayMs(provider === "instagram" ? 1800 : 2800));
     throwIfSyncCancelled();
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -955,6 +972,10 @@ function collectSocialItemsInPage(
   stopUrls: string[],
 ): Promise<{ ok: boolean; items?: SocialItem[]; error?: string }> {
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Same intent as jitteredDelayMs in shared.ts, re-declared because this
+  // function is serialized into the page: evenly spaced scrolling reads as
+  // scripted, so every pause varies.
+  const jitter = (ms: number) => Math.max(1, Math.round(ms * (0.7 + Math.random() * 0.8)));
   const clean = (value: string, fallback: string) => value.replace(/\s+/g, " ").trim().slice(0, 180) || fallback;
   const cleanContent = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 4000);
   const reachedLimit = (count: number) => limit > 0 && count >= limit;
@@ -1126,7 +1147,7 @@ function collectSocialItemsInPage(
       stagnantPasses = found.size === previousSize ? stagnantPasses + 1 : 0;
       const scrollRoot = document.scrollingElement || document.documentElement;
       window.scrollTo({ top: scrollRoot.scrollHeight, behavior: "instant" });
-      await sleep(1000);
+      await sleep(jitter(1000));
     }
     return [...found.values()];
   };

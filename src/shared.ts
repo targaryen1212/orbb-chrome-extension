@@ -50,18 +50,43 @@ export function stateForUi(state: StoredState): UiStoredState {
 
 export interface AutomaticSyncAlarmSchedule {
   delayInMinutes: number;
-  periodInMinutes: number;
 }
 
-export function automaticSyncAlarmSchedule(settings: SyncSettings): AutomaticSyncAlarmSchedule | null {
+/** How far either side of the chosen frequency a run is allowed to drift. */
+export const AUTOMATIC_SYNC_JITTER_RATIO = 0.2;
+
+/**
+ * Schedules a single run rather than a fixed period.
+ *
+ * A clockwork "every 360 minutes exactly" request pattern is the easiest kind
+ * of automation for a provider to spot, so each run is scheduled on its own
+ * with a fresh offset and the alarm is recreated after it fires.
+ */
+export function automaticSyncAlarmSchedule(
+  settings: SyncSettings,
+  random: () => number = Math.random,
+): AutomaticSyncAlarmSchedule | null {
   if (!settings.enabled) return null;
-  const frequencyMinutes = normalizeAutomaticSyncFrequency(
-    settings.frequencyMinutes,
-  );
-  return {
-    delayInMinutes: frequencyMinutes,
-    periodInMinutes: frequencyMinutes,
-  };
+  return { delayInMinutes: jitteredSyncDelayMinutes(settings.frequencyMinutes, random) };
+}
+
+export function jitteredSyncDelayMinutes(
+  frequencyMinutes: number,
+  random: () => number = Math.random,
+): number {
+  const base = normalizeAutomaticSyncFrequency(frequencyMinutes);
+  const spread = base * AUTOMATIC_SYNC_JITTER_RATIO;
+  const delay = base - spread + random() * spread * 2;
+  // Chrome refuses alarms shorter than a minute, and rounding keeps the value
+  // off a suspiciously exact boundary.
+  return Math.max(1, Math.round(delay * 100) / 100);
+}
+
+/**
+ * Spreads out a fixed in-page wait so scrolls and saves are not metronomic.
+ */
+export function jitteredDelayMs(baseMs: number, random: () => number = Math.random): number {
+  return Math.max(1, Math.round(baseMs * (0.7 + random() * 0.8)));
 }
 
 export function normalizeAutomaticSyncFrequency(minutes: number): number {

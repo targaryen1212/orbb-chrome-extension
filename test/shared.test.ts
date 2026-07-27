@@ -6,6 +6,8 @@ import {
   extractDroppedHttpUrl,
   instagramSavedPageForUsername,
   isSocialPostUrl,
+  jitteredDelayMs,
+  jitteredSyncDelayMinutes,
   normalizeSavedUrl,
   platformForUrl,
   pruneExpiredPendingRevocations,
@@ -26,11 +28,31 @@ test("uses the configured interval for both the first and recurring automatic sy
     providers: { instagram: true, reddit: true, x: true },
     maxItemsPerProvider: 0,
   } as const;
-  assert.deepEqual(automaticSyncAlarmSchedule(settings), {
-    delayInMinutes: 30,
-    periodInMinutes: 30,
-  });
+  assert.deepEqual(automaticSyncAlarmSchedule(settings, () => 0), { delayInMinutes: 24 });
+  assert.deepEqual(automaticSyncAlarmSchedule(settings, () => 0.5), { delayInMinutes: 30 });
+  assert.deepEqual(automaticSyncAlarmSchedule(settings, () => 1), { delayInMinutes: 36 });
   assert.equal(automaticSyncAlarmSchedule({ ...settings, enabled: false }), null);
+
+  // Two consecutive runs must not land on the same minute.
+  const random = (() => {
+    const values = [0.13, 0.86];
+    let index = 0;
+    return () => values[index++ % values.length]!;
+  })();
+  assert.notEqual(
+    automaticSyncAlarmSchedule(settings, random)?.delayInMinutes,
+    automaticSyncAlarmSchedule(settings, random)?.delayInMinutes,
+  );
+});
+
+test("keeps jittered waits positive and bounded", () => {
+  assert.equal(jitteredSyncDelayMinutes(30, () => 0), 24);
+  assert.equal(jitteredSyncDelayMinutes(30, () => 1), 36);
+  // Frequencies below the supported minimum are raised before jitter applies.
+  assert.equal(jitteredSyncDelayMinutes(1, () => 0.5), 30);
+  assert.equal(jitteredDelayMs(250, () => 0), 175);
+  assert.equal(jitteredDelayMs(250, () => 1), 375);
+  assert.ok(jitteredDelayMs(0, () => 0) >= 1);
 });
 
 test("keeps failed revocations queued until success or credential expiry", () => {
@@ -136,9 +158,8 @@ test("migrates the removed one-minute schedule to every 30 minutes", () => {
     },
   });
   assert.equal(state.settings.frequencyMinutes, 30);
-  assert.deepEqual(automaticSyncAlarmSchedule(state.settings), {
+  assert.deepEqual(automaticSyncAlarmSchedule(state.settings, () => 0.5), {
     delayInMinutes: 30,
-    periodInMinutes: 30,
   });
 });
 
