@@ -380,6 +380,13 @@ main { min-height: calc(100vh - 48px); }
 .account-group .secondary-button { width: 100%; }
 .danger-button { color: var(--color-error); border-color: color-mix(in srgb, var(--color-error) 34%, var(--color-border)); }
 .setting-help { margin-top: var(--spacing-2); color: var(--color-text-secondary); font-size: 10px; line-height: 1.45; }
+
+.settings-fields { border-top: 1px solid var(--color-border); }
+.settings-fields legend { transform: translateY(calc(-100% - var(--spacing-2))); margin-bottom: calc(-1em - var(--spacing-2)); }
+.field-row { display: flex; flex-direction: column; gap: var(--spacing-2); padding-block: var(--spacing-3); border-bottom: 1px solid var(--color-border); cursor: text; }
+.field-row input { width: 100%; height: var(--size-element-md); padding: 0 var(--spacing-2); color: var(--color-text-primary); background: var(--color-background-surface); border: 1px solid var(--color-border-emphasized); border-radius: var(--radius-element); font-size: 12px; }
+.field-row input::placeholder { color: var(--color-text-secondary); }
+
 .privacy-note { padding: var(--spacing-3); display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; color: var(--color-text-secondary); background: var(--color-background-muted); border-radius: var(--radius-container); }
 .privacy-note svg { width: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .privacy-note h2 { margin-bottom: var(--spacing-1); font-size: 12px; }

@@ -1,6 +1,9 @@
 import type { CreateOrbitItemRequest, OrbitQrAuthSession } from "@orbb/orbit-sdk";
 
-export type SocialProvider = "instagram" | "reddit" | "x";
+export type SocialProvider = "instagram" | "reddit" | "x" | "custom";
+
+/** Providers with a built-in saved-items page Orbb knows how to read. */
+export type BuiltInSocialProvider = Exclude<SocialProvider, "custom">;
 
 export interface AuthState {
   accessToken: string;
@@ -24,6 +27,15 @@ export interface SyncSettings {
   frequencyMinutes: number;
   providers: Record<SocialProvider, boolean>;
   maxItemsPerProvider: number;
+  /**
+   * Overrides the auto-detected Instagram saved page — point it at a single
+   * folder to collect only that one.
+   */
+  instagramUrl?: string;
+  /** Any other page whose links should be collected. */
+  customUrl?: string;
+  /** What to call the custom source in the UI and activity feed. */
+  customName?: string;
 }
 
 export interface ActivityItem {

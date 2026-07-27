@@ -8,7 +8,12 @@ import {
   isSocialPostUrl,
   jitteredDelayMs,
   jitteredSyncDelayMinutes,
+  normalizeCustomSourceUrl,
+  normalizeInstagramSourceUrl,
   normalizeSavedUrl,
+  providerDisplayName,
+  providerOrigins,
+  providerStartPage,
   platformForUrl,
   pruneExpiredPendingRevocations,
   PROVIDER_PAGES,
@@ -25,7 +30,7 @@ test("uses the configured interval for both the first and recurring automatic sy
   const settings = {
     enabled: true,
     frequencyMinutes: 30,
-    providers: { instagram: true, reddit: true, x: true },
+    providers: { instagram: true, reddit: true, x: true, custom: false },
     maxItemsPerProvider: 0,
   } as const;
   assert.deepEqual(automaticSyncAlarmSchedule(settings, () => 0), { delayInMinutes: 24 });
@@ -132,7 +137,7 @@ test("migrates legacy sync caps to collect until the feed ends", () => {
     settings: {
       enabled: false,
       frequencyMinutes: 360,
-      providers: { instagram: true, reddit: true, x: true },
+      providers: { instagram: true, reddit: true, x: true, custom: false },
       maxItemsPerProvider: 100,
     },
   });
@@ -141,7 +146,7 @@ test("migrates legacy sync caps to collect until the feed ends", () => {
     settings: {
       enabled: false,
       frequencyMinutes: 360,
-      providers: { instagram: true, reddit: true, x: true },
+      providers: { instagram: true, reddit: true, x: true, custom: false },
       maxItemsPerProvider: 500,
     },
   });
@@ -153,7 +158,7 @@ test("migrates the removed one-minute schedule to every 30 minutes", () => {
     settings: {
       enabled: true,
       frequencyMinutes: 1,
-      providers: { instagram: true, reddit: true, x: true },
+      providers: { instagram: true, reddit: true, x: true, custom: false },
       maxItemsPerProvider: 0,
     },
   });
@@ -173,7 +178,7 @@ test("retries only failed automatic syncs when Chrome starts", () => {
     settings: {
       enabled: true,
       frequencyMinutes: 30,
-      providers: { instagram: true, reddit: true, x: true },
+      providers: { instagram: true, reddit: true, x: true, custom: false },
       maxItemsPerProvider: 0,
     },
     sync: { running: false, completed: 0, total: 0, automaticRetryPending: true },
@@ -213,7 +218,7 @@ test("recovers interrupted sync state when a worker restarts", () => {
     settings: {
       enabled: true,
       frequencyMinutes: 30,
-      providers: { instagram: true, reddit: true, x: true },
+      providers: { instagram: true, reddit: true, x: true, custom: false },
       maxItemsPerProvider: 0,
     },
     sync: {
@@ -252,6 +257,63 @@ test("maps imported content to private Orbit URL items", () => {
   assert.equal(item.privacy?.scope, "private");
   assert.equal(item.metadata?.idempotencyKey, "chrome-sync:preview-item-1");
   assert.equal(platformForUrl(item.source.url ?? ""), "instagram");
+});
+
+test("routes collection to the configured source pages", () => {
+  const base = mergeStoredState({}).settings;
+  assert.equal(providerStartPage("instagram", base), PROVIDER_PAGES.instagram);
+  assert.equal(providerStartPage("reddit", base), PROVIDER_PAGES.reddit);
+  // A custom source with no address must not open a blank tab.
+  assert.equal(providerStartPage("custom", base), null);
+
+  const configured = { ...base, instagramUrl: "https://www.instagram.com/me/saved/food/", customUrl: "https://example.com/links" };
+  assert.equal(providerStartPage("instagram", configured), "https://www.instagram.com/me/saved/food/");
+  assert.equal(providerStartPage("custom", configured), "https://example.com/links");
+});
+
+test("accepts only usable source addresses", () => {
+  assert.equal(
+    normalizeInstagramSourceUrl(" https://instagram.com/me/saved/food/ "),
+    "https://instagram.com/me/saved/food/",
+  );
+  assert.equal(normalizeInstagramSourceUrl("https://example.com/me/saved/"), null);
+  assert.equal(normalizeInstagramSourceUrl("instagram.com/me"), null);
+  assert.equal(normalizeCustomSourceUrl("https://example.com/links"), "https://example.com/links");
+  assert.equal(normalizeCustomSourceUrl("javascript:alert(1)"), null);
+  assert.equal(normalizeCustomSourceUrl("not a url"), null);
+});
+
+test("discards stored source addresses that no longer parse", () => {
+  const state = mergeStoredState({
+    settings: {
+      ...mergeStoredState({}).settings,
+      instagramUrl: "https://evil.example.com/saved/",
+      customUrl: "javascript:alert(1)",
+      customName: "  Reading list  ",
+    },
+  });
+  assert.equal(state.settings.instagramUrl, undefined);
+  assert.equal(state.settings.customUrl, undefined);
+  assert.equal(state.settings.customName, "Reading list");
+});
+
+test("labels and matches items from a custom source", () => {
+  assert.equal(providerDisplayName("custom", undefined), "Custom source");
+  assert.equal(
+    providerDisplayName("custom", { ...mergeStoredState({}).settings, customName: "Reading list" }),
+    "Reading list",
+  );
+  assert.equal(isSocialPostUrl("custom", "https://example.com/any/article"), true);
+  assert.equal(isSocialPostUrl("custom", "mailto:someone@example.com"), false);
+
+  // Custom items are tagged with the site they came from, not "custom".
+  const item = socialItemToOrbitItem({
+    platform: "custom",
+    title: "An article",
+    url: "https://example.com/any/article",
+  });
+  assert.equal(item.source.platform, "example.com");
+  assert.deepEqual(item.tags, ["example.com", "imported-save"]);
 });
 
 test("defaults and preserves the per-provider first-sync markers", () => {

@@ -8,7 +8,11 @@ import {
   instagramSavedPageForUsername,
   isSocialPostUrl,
   jitteredDelayMs,
-  PROVIDER_ORIGINS,
+  normalizeCustomSourceUrl,
+  normalizeInstagramSourceUrl,
+  providerDisplayName,
+  providerOrigins,
+  providerStartPage,
   PROVIDER_PAGES,
   SYNC_ALARM,
   mergeStoredState,
@@ -511,7 +515,7 @@ async function handleContextMenu(info: chrome.contextMenus.OnClickData, tab?: ch
 
 async function updateSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
   const state = await getState();
-  state.settings = {
+  const settings: SyncSettings = {
     ...state.settings,
     ...patch,
     providers: { ...state.settings.providers, ...patch.providers },
@@ -520,9 +524,37 @@ async function updateSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
     ),
     maxItemsPerProvider: normalizeSyncLimit(patch.maxItemsPerProvider ?? state.settings.maxItemsPerProvider),
   };
+
+  if (patch.instagramUrl !== undefined) {
+    settings.instagramUrl = patch.instagramUrl.trim()
+      ? normalizeInstagramSourceUrl(patch.instagramUrl) ?? throwSettingError(
+          "Enter an instagram.com address, like https://www.instagram.com/<account>/saved/<folder>/.",
+        )
+      : undefined;
+  }
+  if (patch.customUrl !== undefined) {
+    settings.customUrl = patch.customUrl.trim()
+      ? normalizeCustomSourceUrl(patch.customUrl) ?? throwSettingError(
+          "Enter a full web address for the custom source, including https://.",
+        )
+      : undefined;
+  }
+  if (patch.customName !== undefined) {
+    settings.customName = patch.customName.trim().slice(0, 60) || undefined;
+  }
+  // A source with nowhere to look would fail on every scheduled run.
+  if (settings.providers.custom && !settings.customUrl) {
+    throwSettingError("Add a page address before turning on the custom source.");
+  }
+
+  state.settings = settings;
   await setState(state);
   await restoreAlarm();
   return state.settings;
+}
+
+function throwSettingError(message: string): never {
+  throw new Error(message);
 }
 
 async function restoreAlarm(): Promise<void> {
@@ -549,7 +581,7 @@ async function previewSocialSync(provider: SocialProvider, limit?: number): Prom
   try {
     // The panel's "import the latest N" choice; zero or absent collects the
     // whole feed, matching the maxItemsPerProvider convention.
-    const items = await collectProvider(provider, limit ?? state.settings.maxItemsPerProvider);
+    const items = await collectProvider(provider, state.settings, limit ?? state.settings.maxItemsPerProvider);
     const markedItems = await markAlreadySaved(items);
     state = await getState();
     state.sync = {
@@ -666,7 +698,7 @@ async function saveSyncPreview(
   // re-collected next time instead of being skipped over.
   await markProviderSynced(provider, completedUrls);
   await addActivity({
-    title: `${providerLabel(provider)} manual import ${failed ? "finished with errors" : "complete"}`,
+    title: `${providerLabel(provider, state.settings)} manual import ${failed ? "finished with errors" : "complete"}`,
     detail: `${saved} saved${skipped ? `, ${skipped} already in Orbb` : ""}${failed ? `, ${failed} failed` : ""}`,
     platform: provider,
     status: failed ? "failed" : "saved",
@@ -720,7 +752,7 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
         const stopUrls = firstRun
           ? []
           : state.capturedUrls.filter((url) => isSocialPostUrl(provider, url));
-        const items = await collectProvider(provider, providerLimit, stopUrls);
+        const items = await collectProvider(provider, state.settings, providerLimit, stopUrls);
         const existingUrls = await existingSourceUrls(items.map((item) => item.url));
         let providerSaved = 0;
         let providerSkipped = 0;
@@ -751,7 +783,7 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
           await markProviderSynced(provider, items.map((item) => item.url));
         }
         await addActivity({
-          title: `${providerLabel(provider)} automatic sync complete`,
+          title: `${providerLabel(provider, state.settings)} automatic sync complete`,
           detail: firstRun
             ? `Seeded the ${providerSaved} newest save${providerSaved === 1 ? "" : "s"}; future runs pick up where this left off`
             : `${providerSaved} saved${providerSkipped ? `, ${providerSkipped} already in Orbb` : ""}`,
@@ -760,9 +792,9 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
         });
       } catch (error) {
         if (syncCancellationRequested) break;
-        failures.push(`${providerLabel(provider)}: ${error instanceof Error ? error.message : String(error)}`);
+        failures.push(`${providerLabel(provider, state.settings)}: ${error instanceof Error ? error.message : String(error)}`);
         await addActivity({
-          title: `${providerLabel(provider)} sync needs attention`,
+          title: `${providerLabel(provider, state.settings)} sync needs attention`,
           detail: error instanceof Error ? error.message : String(error),
           platform: provider,
           status: "failed",
@@ -872,23 +904,33 @@ async function markAlreadySaved(items: SocialItem[]): Promise<SocialItem[]> {
   });
 }
 
-async function collectProvider(provider: SocialProvider, limit: number, stopUrls: string[] = []): Promise<SocialItem[]> {
-  const hasPermission = await chrome.permissions.contains({
-    origins: PROVIDER_ORIGINS[provider],
-  });
+async function collectProvider(
+  provider: SocialProvider,
+  settings: SyncSettings,
+  limit: number,
+  stopUrls: string[] = [],
+): Promise<SocialItem[]> {
+  const startPage = providerStartPage(provider, settings);
+  if (!startPage) {
+    throw new Error(`Add a page address for ${providerLabel(provider, settings)} in settings.`);
+  }
+  const origins = providerOrigins(provider, settings);
+  const hasPermission = origins.length > 0 && await chrome.permissions.contains({ origins });
   if (!hasPermission) {
     throw new Error(
-      `Allow ${providerLabel(provider)} access before importing saved items.`,
+      `Allow ${providerLabel(provider, settings)} access before importing saved items.`,
     );
   }
-  const tab = await chrome.tabs.create({ url: PROVIDER_PAGES[provider], active: false });
-  if (!tab.id) throw new Error(`Could not open ${providerLabel(provider)}.`);
+  const tab = await chrome.tabs.create({ url: startPage, active: false });
+  if (!tab.id) throw new Error(`Could not open ${providerLabel(provider, settings)}.`);
   activeSyncTabId = tab.id;
   try {
     throwIfSyncCancelled();
     await waitForTab(tab.id, 30_000);
     throwIfSyncCancelled();
-    if (provider === "instagram") {
+    // A configured Instagram URL already points at the right saved page, so
+    // the account-detection round trip is skipped entirely.
+    if (provider === "instagram" && !settings.instagramUrl) {
       const usernameResults = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: "MAIN",
@@ -910,7 +952,11 @@ async function collectProvider(provider: SocialProvider, limit: number, stopUrls
       args: [provider, limit, COLLECTION_BUDGET_MS, stopUrls],
     });
     const result = results[0]?.result as { ok: boolean; items?: SocialItem[]; error?: string } | undefined;
-    if (!result?.ok) throw new Error(result?.error || `Could not read ${providerLabel(provider)} saves. Make sure you are logged in.`);
+    if (!result?.ok) {
+      throw new Error(
+        result?.error || `Could not read ${providerLabel(provider, settings)} saves. Make sure you are logged in.`,
+      );
+    }
     const items = deduplicateSocialItems(result.items ?? []);
     return limit > 0 ? items.slice(0, limit) : items;
   } finally {
@@ -1114,13 +1160,23 @@ function collectSocialItemsInPage(
       pass += 1
     ) {
       const previousSize = found.size;
-      const anchors = [...document.querySelectorAll<HTMLAnchorElement>("a[href]")];
+      // A custom source has no known post shape, so collection is limited to
+      // the page's main content — scanning every anchor would sweep up the
+      // site's own navigation and footer.
+      const scope = provider === "custom"
+        ? document.querySelector("main, article, [role='main'], #content") ?? document
+        : document;
+      const anchors = [...scope.querySelectorAll<HTMLAnchorElement>("a[href]")];
       for (const anchor of anchors) {
         let url: URL;
         try { url = new URL(anchor.href, location.href); } catch { continue; }
         const matches = provider === "reddit"
           ? /\/comments\/[a-z0-9]+\//i.test(url.pathname)
-          : /\/status\/\d+/.test(url.pathname);
+          : provider === "x"
+            ? /\/status\/\d+/.test(url.pathname)
+            : (url.protocol === "http:" || url.protocol === "https:")
+              && url.href !== location.href
+              && Boolean(anchor.textContent?.trim());
         if (!matches) continue;
         url.search = "";
         url.hash = "";
@@ -1137,7 +1193,7 @@ function collectSocialItemsInPage(
         const content = cleanContent(text || "");
         found.set(url.toString(), {
           platform: provider,
-          title: clean(content, provider === "x" ? "X bookmark" : "Reddit saved post"),
+          title: clean(content, provider === "x" ? "X bookmark" : provider === "reddit" ? "Reddit saved post" : "Saved link"),
           content: content || undefined,
           url: url.toString(),
         });
@@ -1156,7 +1212,12 @@ function collectSocialItemsInPage(
     try {
       const items = provider === "instagram" ? await collectInstagram() : await collectDom();
       if (items.length === 0 && !encounteredKnownItem) {
-        return { ok: false, error: `No ${provider} saves were visible. Confirm you are logged in and have saved items.` };
+        return {
+          ok: false,
+          error: provider === "custom"
+            ? "No links were found on that page. Check the address, and that the page shows content without signing in again."
+            : `No ${provider} saves were visible. Confirm you are logged in and have saved items.`,
+        };
       }
       return { ok: true, items };
     } catch (error) {
@@ -1202,8 +1263,8 @@ function waitForTab(tabId: number, timeoutMs: number): Promise<void> {
   });
 }
 
-function providerLabel(provider: SocialProvider): string {
-  return provider === "x" ? "X" : provider[0]?.toUpperCase() + provider.slice(1);
+function providerLabel(provider: SocialProvider, settings?: SyncSettings): string {
+  return providerDisplayName(provider, settings);
 }
 
 function normalizeSyncLimit(value: number): number {

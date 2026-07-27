@@ -4,7 +4,8 @@ import {
   extractDroppedHttpUrl,
   MAX_DROP_BYTES,
   platformForUrl,
-  PROVIDER_ORIGINS,
+  DEFAULT_SETTINGS,
+  providerOrigins,
 } from "./shared";
 import type { BackgroundRequest, BackgroundResponse, SocialItem, SocialProvider, UiStoredState } from "./types";
 
@@ -67,6 +68,14 @@ const elements = {
   instagramToggle: byId<HTMLInputElement>("instagramToggle"),
   redditToggle: byId<HTMLInputElement>("redditToggle"),
   xToggle: byId<HTMLInputElement>("xToggle"),
+  customToggle: byId<HTMLInputElement>("customToggle"),
+  customToggleLabel: byId("customToggleLabel"),
+  instagramUrlInput: byId<HTMLInputElement>("instagramUrlInput"),
+  customNameInput: byId<HTMLInputElement>("customNameInput"),
+  customUrlInput: byId<HTMLInputElement>("customUrlInput"),
+  customSourceRow: byId("customSourceRow"),
+  customSourceName: byId("customSourceName"),
+  customSourceHost: byId("customSourceHost"),
   signOutButton: byId<HTMLButtonElement>("signOutButton"),
   previewBackButton: byId<HTMLButtonElement>("previewBackButton"),
   previewTitle: byId("previewTitle"),
@@ -160,8 +169,19 @@ for (const [provider, input] of [
   ["instagram", elements.instagramToggle],
   ["reddit", elements.redditToggle],
   ["x", elements.xToggle],
+  ["custom", elements.customToggle],
 ] as const) {
   input.addEventListener("change", () => void updateProvider(provider, input.checked));
+}
+
+// Committing on blur rather than on every keystroke: the background validates
+// these and rejects a half-typed address.
+for (const [field, input] of [
+  ["instagramUrl", elements.instagramUrlInput],
+  ["customUrl", elements.customUrlInput],
+  ["customName", elements.customNameInput],
+] as const) {
+  input.addEventListener("change", () => void updateSourceField(field, input.value));
 }
 
 chrome.runtime.onMessage.addListener((message: { type?: string }) => {
@@ -549,7 +569,7 @@ async function runSync(provider: SocialProvider): Promise<void> {
   setSyncButtons(true, provider);
   showProgress(elements.syncProgress);
   elements.syncMessage.hidden = true;
-  showToast(`Collecting ${provider === "x" ? "X" : titleCase(provider)} saves for review…`);
+  showToast(`Collecting ${providerLabel(provider)} saves for review…`);
   try {
     const limit = Number(elements.importAmountSelect.value) || 0;
     const items = await send<SocialItem[]>({ type: "PREVIEW_SYNC", provider, limit });
@@ -591,7 +611,7 @@ function openSyncPreview(provider: SocialProvider, items: SocialItem[]): void {
   activeView = "preview";
   resetProgress(elements.previewProgress);
   elements.previewActionStatus.textContent = "";
-  elements.previewTitle.textContent = `${provider === "x" ? "X" : titleCase(provider)} captures`;
+  elements.previewTitle.textContent = `${providerLabel(provider)} captures`;
   renderPreviewItems();
   applyViewVisibility(true);
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -757,11 +777,27 @@ async function updateProvider(provider: SocialProvider, enabled: boolean): Promi
   }
 }
 
+async function updateSourceField(
+  field: "instagramUrl" | "customUrl" | "customName",
+  value: string,
+): Promise<void> {
+  try {
+    await send({ type: "UPDATE_SETTINGS", settings: { [field]: value } });
+    await refresh();
+    showToast(value.trim() ? "Collection source updated" : "Collection source cleared");
+  } catch (error) {
+    showToast(errorMessage(error), true);
+    // Puts the stored value back so a rejected address does not linger.
+    await refresh();
+  }
+}
+
 async function ensureProviderPermissions(
   providers: SocialProvider[],
 ): Promise<boolean> {
+  const settings = snapshot?.state.settings ?? DEFAULT_SETTINGS;
   const origins = [
-    ...new Set(providers.flatMap((provider) => PROVIDER_ORIGINS[provider])),
+    ...new Set(providers.flatMap((provider) => providerOrigins(provider, settings))),
   ];
   if (origins.length === 0) return true;
   const granted = await chrome.permissions.request({ origins });
@@ -777,6 +813,7 @@ async function ensureProviderPermissions(
 function providerInput(provider: SocialProvider): HTMLInputElement {
   if (provider === "instagram") return elements.instagramToggle;
   if (provider === "reddit") return elements.redditToggle;
+  if (provider === "custom") return elements.customToggle;
   return elements.xToggle;
 }
 
@@ -883,7 +920,7 @@ function renderSync(state: UiStoredState): void {
     });
   }
   if (state.sync.running) {
-    const label = state.sync.provider === "x" ? "X" : titleCase(state.sync.provider || "saves");
+    const label = state.sync.provider ? providerLabel(state.sync.provider) : "Saves";
     elements.syncSummary.textContent = `${label} ${state.sync.completed}/${state.sync.total || "…"}`;
     if (state.sync.total > 0) showProgress(elements.syncProgress, state.sync.completed, state.sync.total);
     else showProgress(elements.syncProgress);
@@ -907,7 +944,37 @@ function renderSettings(state: UiStoredState): void {
   elements.instagramToggle.checked = state.settings.providers.instagram;
   elements.redditToggle.checked = state.settings.providers.reddit;
   elements.xToggle.checked = state.settings.providers.x;
+  elements.customToggle.checked = state.settings.providers.custom;
+
+  const customName = state.settings.customName?.trim() || "Custom source";
+  elements.customToggleLabel.textContent = customName;
+  elements.customSourceName.textContent = customName;
+  // Never overwrite a field mid-edit — the panel re-renders on every state
+  // change, including ones this typing will cause.
+  setFieldValue(elements.instagramUrlInput, state.settings.instagramUrl ?? "");
+  setFieldValue(elements.customUrlInput, state.settings.customUrl ?? "");
+  setFieldValue(elements.customNameInput, state.settings.customName ?? "");
+
+  const customUrl = state.settings.customUrl;
+  elements.customSourceRow.hidden = !customUrl;
+  if (customUrl) {
+    elements.customSourceHost.textContent = hostLabel(customUrl);
+  }
 }
+
+function setFieldValue(input: HTMLInputElement, value: string): void {
+  if (document.activeElement === input) return;
+  input.value = value;
+}
+
+function hostLabel(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return "Links from your chosen page";
+  }
+}
+
 
 function renderActivity(state: UiStoredState): void {
   elements.activityList.replaceChildren();
@@ -1044,6 +1111,12 @@ function relativeTime(timestamp: number): string {
 
 function hostFor(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "web"; }
+}
+
+/** Uses the configured name for a custom source, so toasts match the UI. */
+function providerLabel(provider: SocialProvider): string {
+  if (provider === "custom") return snapshot?.state.settings.customName?.trim() || "Custom source";
+  return provider === "x" ? "X" : titleCase(provider);
 }
 
 function titleCase(value: string): string {

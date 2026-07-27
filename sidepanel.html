@@ -137,6 +137,11 @@
               <span class="row-copy"><strong>X</strong><span>Bookmarks</span></span>
               <button class="secondary-button compact-button sync-button" data-provider="x" type="button" aria-label="Import bookmarks from X">Import</button>
             </li>
+            <li class="source-row" id="customSourceRow" hidden>
+              <span class="source-mark" aria-hidden="true">•</span>
+              <span class="row-copy"><strong id="customSourceName">Custom source</strong><span id="customSourceHost">Links from your chosen page</span></span>
+              <button class="secondary-button compact-button sync-button" data-provider="custom" type="button" aria-label="Import links from the custom source">Import</button>
+            </li>
           </ul>
         </section>
 
@@ -226,7 +231,26 @@
           <label class="toggle-row"><span class="row-copy"><strong>Instagram</strong><small>Saved posts and folders</small></span><input id="instagramToggle" type="checkbox" /></label>
           <label class="toggle-row"><span class="row-copy"><strong>Reddit</strong><small>Saved posts</small></span><input id="redditToggle" type="checkbox" /></label>
           <label class="toggle-row"><span class="row-copy"><strong>X</strong><small>Bookmarks</small></span><input id="xToggle" type="checkbox" /></label>
+          <label class="toggle-row"><span class="row-copy"><strong id="customToggleLabel">Custom source</strong><small>Links from any page you choose</small></span><input id="customToggle" type="checkbox" /></label>
         </fieldset>
+
+        <fieldset class="settings-group settings-fields">
+          <legend>Where to collect from</legend>
+          <label class="field-row" for="instagramUrlInput">
+            <span class="row-copy"><strong>Instagram page</strong><small>Leave empty to use every saved folder in the signed-in account</small></span>
+            <input id="instagramUrlInput" type="url" inputmode="url" spellcheck="false" placeholder="https://www.instagram.com/you/saved/recipes/" />
+          </label>
+          <label class="field-row" for="customNameInput">
+            <span class="row-copy"><strong>Custom source name</strong><small>Shown in imports and activity</small></span>
+            <input id="customNameInput" type="text" maxlength="60" placeholder="Reading list" />
+          </label>
+          <label class="field-row" for="customUrlInput">
+            <span class="row-copy"><strong>Custom source page</strong><small>Orbb collects the links in this page's main content</small></span>
+            <input id="customUrlInput" type="url" inputmode="url" spellcheck="false" placeholder="https://example.com/my-links" />
+          </label>
+          <p class="setting-help">Custom pages are read with the sessions already open in Chrome. A page that lists many unrelated links will import many unrelated links — review a manual import first.</p>
+        </fieldset>
+
 
         <section class="settings-group account-group" aria-labelledby="accountTitle">
           <h2 id="accountTitle">Connected account</h2>
