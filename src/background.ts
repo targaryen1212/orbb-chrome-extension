@@ -2,6 +2,7 @@ import { OrbitClient } from "@orbb/orbit-sdk";
 import type { CreateOrbitItemRequest } from "@orbb/orbit-sdk";
 import {
   DEFAULT_SETTINGS,
+  FIRST_SYNC_SEED_COUNT,
   automaticSyncAlarmSchedule,
   enqueuePendingRevocation,
   instagramSavedPageForUsername,
@@ -146,7 +147,7 @@ async function handleRequest(request: BackgroundRequest): Promise<unknown> {
     case "SAVE_ITEM":
       return saveItem(request.item, { dedupeUrl: request.dedupeUrl, recordActivity: true });
     case "PREVIEW_SYNC":
-      return previewSocialSync(request.provider);
+      return previewSocialSync(request.provider, request.limit);
     case "CANCEL_SYNC":
       return cancelSync();
     case "SAVE_SYNC_PREVIEW":
@@ -514,7 +515,7 @@ async function restoreAlarm(): Promise<void> {
   if (schedule) await chrome.alarms.create(SYNC_ALARM, schedule);
 }
 
-async function previewSocialSync(provider: SocialProvider): Promise<SocialItem[]> {
+async function previewSocialSync(provider: SocialProvider, limit?: number): Promise<SocialItem[]> {
   let state = await getState();
   await requireFreshAuth(state);
   if (state.sync.running) throw new Error("Another sync is already running.");
@@ -529,7 +530,9 @@ async function previewSocialSync(provider: SocialProvider): Promise<SocialItem[]
   };
   await setState(state);
   try {
-    const items = await collectProvider(provider, state.settings.maxItemsPerProvider);
+    // The panel's "import the latest N" choice; zero or absent collects the
+    // whole feed, matching the maxItemsPerProvider convention.
+    const items = await collectProvider(provider, limit ?? state.settings.maxItemsPerProvider);
     const markedItems = await markAlreadySaved(items);
     state = await getState();
     state.sync = {
@@ -611,6 +614,7 @@ async function saveSyncPreview(
   let saved = 0;
   let skipped = 0;
   let failed = 0;
+  const completedUrls: string[] = [];
   for (const item of items) {
     const normalized = normalizeSavedUrl(item.url);
     if (!normalized) {
@@ -618,6 +622,7 @@ async function saveSyncPreview(
     } else {
       if (existingUrls.has(normalized) || item.alreadySaved) {
         skipped += 1;
+        completedUrls.push(normalized);
       } else {
         try {
           await saveItem(socialItemToOrbitItem({ ...item, url: normalized }), {
@@ -626,6 +631,7 @@ async function saveSyncPreview(
             knownNew: true,
           });
           saved += 1;
+          completedUrls.push(normalized);
         } catch {
           failed += 1;
         }
@@ -638,6 +644,10 @@ async function saveSyncPreview(
   }
 
   const result = { total: items.length, saved, skipped, failed };
+  // A manual import is as good a baseline as an automatic seed: only the
+  // successfully handled URLs become stop markers, so failed items are
+  // re-collected next time instead of being skipped over.
+  await markProviderSynced(provider, completedUrls);
   await addActivity({
     title: `${providerLabel(provider)} manual import ${failed ? "finished with errors" : "complete"}`,
     detail: `${saved} saved${skipped ? `, ${skipped} already in Orbb` : ""}${failed ? `, ${failed} failed` : ""}`,
@@ -681,7 +691,19 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
       state.sync.provider = provider;
       await setState(state);
       try {
-        const items = await collectProvider(provider, state.settings.maxItemsPerProvider);
+        const firstRun = !state.providerFirstSyncDone[provider];
+        // The first run only seeds the newest saves; afterwards every synced
+        // URL sits in capturedUrls, so later runs stop scanning at the first
+        // known item instead of re-walking the whole saved feed.
+        const providerLimit = firstRun
+          ? (state.settings.maxItemsPerProvider > 0
+              ? Math.min(FIRST_SYNC_SEED_COUNT, state.settings.maxItemsPerProvider)
+              : FIRST_SYNC_SEED_COUNT)
+          : state.settings.maxItemsPerProvider;
+        const stopUrls = firstRun
+          ? []
+          : state.capturedUrls.filter((url) => isSocialPostUrl(provider, url));
+        const items = await collectProvider(provider, providerLimit, stopUrls);
         const existingUrls = await existingSourceUrls(items.map((item) => item.url));
         let providerSaved = 0;
         let providerSkipped = 0;
@@ -708,9 +730,14 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
           await setState(progress);
           await delay(250);
         }
+        if (!syncCancellationRequested) {
+          await markProviderSynced(provider, items.map((item) => item.url));
+        }
         await addActivity({
           title: `${providerLabel(provider)} automatic sync complete`,
-          detail: `${providerSaved} saved${providerSkipped ? `, ${providerSkipped} already in Orbb` : ""}`,
+          detail: firstRun
+            ? `Seeded the ${providerSaved} newest save${providerSaved === 1 ? "" : "s"}; future runs pick up where this left off`
+            : `${providerSaved} saved${providerSkipped ? `, ${providerSkipped} already in Orbb` : ""}`,
           platform: provider,
           status: "saved",
         });
@@ -755,6 +782,24 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
     await setState(state);
     throw error;
   }
+}
+
+/**
+ * Records a completed provider run so the next scan can stop early.
+ *
+ * Every collected URL — saved or skipped — lands in capturedUrls, because the
+ * stop-at-known scan only trusts the local list. Failed saves never reach this
+ * point (they abort the provider), so an item that failed to upload stays
+ * unknown and is retried on the next run.
+ */
+async function markProviderSynced(provider: SocialProvider, rawUrls: string[]): Promise<void> {
+  const state = await getState();
+  const urls = rawUrls
+    .map((url) => normalizeSavedUrl(url))
+    .filter((url): url is string => Boolean(url));
+  state.capturedUrls = [...new Set([...urls, ...state.capturedUrls])].slice(0, MAX_CAPTURED_URLS);
+  state.providerFirstSyncDone = { ...state.providerFirstSyncDone, [provider]: true };
+  await setState(state);
 }
 
 async function existingSourceUrls(rawUrls: string[]): Promise<Set<string>> {
@@ -810,7 +855,7 @@ async function markAlreadySaved(items: SocialItem[]): Promise<SocialItem[]> {
   });
 }
 
-async function collectProvider(provider: SocialProvider, limit: number): Promise<SocialItem[]> {
+async function collectProvider(provider: SocialProvider, limit: number, stopUrls: string[] = []): Promise<SocialItem[]> {
   const hasPermission = await chrome.permissions.contains({
     origins: PROVIDER_ORIGINS[provider],
   });
@@ -845,7 +890,7 @@ async function collectProvider(provider: SocialProvider, limit: number): Promise
       target: { tabId: tab.id },
       world: "MAIN",
       func: collectSocialItemsInPage,
-      args: [provider, limit, COLLECTION_BUDGET_MS],
+      args: [provider, limit, COLLECTION_BUDGET_MS, stopUrls],
     });
     const result = results[0]?.result as { ok: boolean; items?: SocialItem[]; error?: string } | undefined;
     if (!result?.ok) throw new Error(result?.error || `Could not read ${providerLabel(provider)} saves. Make sure you are logged in.`);
@@ -907,12 +952,48 @@ function collectSocialItemsInPage(
   provider: SocialProvider,
   limit: number,
   budgetMs: number,
+  stopUrls: string[],
 ): Promise<{ ok: boolean; items?: SocialItem[]; error?: string }> {
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   const clean = (value: string, fallback: string) => value.replace(/\s+/g, " ").trim().slice(0, 180) || fallback;
   const cleanContent = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 4000);
   const reachedLimit = (count: number) => limit > 0 && count >= limit;
   const deadline = Date.now() + Math.max(30_000, budgetMs);
+
+  // Mirrors normalizeSavedUrl/canonicalSocialPostUrl from shared.ts — this
+  // function is serialized into the page, so it cannot import them. stopUrls
+  // arrive already normalized; a mismatch here would defeat early stopping.
+  const canonicalKey = (rawUrl: string): string => {
+    try {
+      const url = new URL(rawUrl, location.href);
+      url.hash = "";
+      url.search = "";
+      const hostname = url.hostname.replace(/^www\./, "").toLowerCase();
+      if (hostname === "x.com" || hostname === "twitter.com") {
+        const statusId = url.pathname.match(/\/status\/(\d+)/)?.[1];
+        if (statusId) return `https://x.com/i/status/${statusId}`;
+      }
+      if (hostname === "reddit.com" || hostname.endsWith(".reddit.com")) {
+        const segments = url.pathname.split("/").filter(Boolean);
+        const commentsIndex = segments.findIndex((segment) => segment.toLowerCase() === "comments");
+        const postId = commentsIndex >= 0 ? segments[commentsIndex + 1]?.toLowerCase() : undefined;
+        if (postId && /^[a-z0-9]+$/.test(postId)) {
+          const commentId = segments[commentsIndex + 3]?.toLowerCase();
+          return commentId && /^[a-z0-9]+$/.test(commentId)
+            ? `https://www.reddit.com/comments/${postId}/_/${commentId}/`
+            : `https://www.reddit.com/comments/${postId}/`;
+        }
+      }
+      return url.toString();
+    } catch {
+      return rawUrl;
+    }
+  };
+  const knownUrls = new Set(stopUrls);
+  const isKnown = (url: string) => knownUrls.has(canonicalKey(url));
+  // Distinguishes "nothing new since last sync" (success) from "nothing was
+  // visible at all" (probably logged out) when zero items come back.
+  let encounteredKnownItem = false;
   const budgetExpired = () => Date.now() >= deadline;
 
   const collectInstagram = async () => {
@@ -949,10 +1030,13 @@ function collectSocialItemsInPage(
     for (const folder of folders) {
       if (budgetExpired()) break;
       let cursor = "";
+      // Each folder feed is newest-first, so hitting an already-synced post
+      // means the rest of that folder was collected on a previous run.
+      let reachedKnownItem = false;
       const maxPages = limit > 0 ? Math.min(200, Math.ceil(limit / 50) + 2) : 200;
       for (
         let page = 0;
-        page < maxPages && !reachedLimit(items.length) && !budgetExpired();
+        page < maxPages && !reachedLimit(items.length) && !budgetExpired() && !reachedKnownItem;
         page += 1
       ) {
         const endpoint = folder.id === "all-posts"
@@ -973,12 +1057,18 @@ function collectSocialItemsInPage(
           if (!code) continue;
           const product = String(media.product_type || "").toLowerCase();
           const content = cleanContent(media.caption?.text || "");
+          const postUrl = `https://www.instagram.com/${product === "clips" ? "reel" : "p"}/${code}/`;
+          if (isKnown(postUrl)) {
+            reachedKnownItem = true;
+            encounteredKnownItem = true;
+            break;
+          }
           items.push({
             platform: "instagram",
             collection: folder.title,
             title: clean(content, product === "clips" ? "Instagram reel" : "Instagram post"),
             content: content || undefined,
-            url: `https://www.instagram.com/${product === "clips" ? "reel" : "p"}/${code}/`,
+            url: postUrl,
             coverImage: media.image_versions2?.candidates?.[0]?.url || media.carousel_media?.[0]?.image_versions2?.candidates?.[0]?.url || "",
           });
           if (reachedLimit(items.length)) break;
@@ -1013,6 +1103,12 @@ function collectSocialItemsInPage(
         if (!matches) continue;
         url.search = "";
         url.hash = "";
+        if (isKnown(url.toString())) {
+          // Finish scanning what is already rendered (new items sit above the
+          // known one), then stop scrolling for more.
+          encounteredKnownItem = true;
+          continue;
+        }
         const container = anchor.closest(provider === "x" ? "article" : "article, shreddit-post, [data-testid='post-container']");
         const text = provider === "x"
           ? container?.querySelector("[data-testid='tweetText']")?.textContent
@@ -1026,6 +1122,7 @@ function collectSocialItemsInPage(
         });
         if (reachedLimit(found.size)) break;
       }
+      if (encounteredKnownItem) break;
       stagnantPasses = found.size === previousSize ? stagnantPasses + 1 : 0;
       const scrollRoot = document.scrollingElement || document.documentElement;
       window.scrollTo({ top: scrollRoot.scrollHeight, behavior: "instant" });
@@ -1037,7 +1134,7 @@ function collectSocialItemsInPage(
   return (async () => {
     try {
       const items = provider === "instagram" ? await collectInstagram() : await collectDom();
-      if (items.length === 0) {
+      if (items.length === 0 && !encounteredKnownItem) {
         return { ok: false, error: `No ${provider} saves were visible. Confirm you are logged in and have saved items.` };
       }
       return { ok: true, items };

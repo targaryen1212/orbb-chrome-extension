@@ -54,6 +54,8 @@ export interface StoredState {
   settings: SyncSettings;
   activity: ActivityItem[];
   capturedUrls: string[];
+  /** Providers whose seeding first sync completed; later runs stop at known items. */
+  providerFirstSyncDone: Partial<Record<SocialProvider, boolean>>;
   sync: SyncState;
 }
 
@@ -87,7 +89,7 @@ export type BackgroundRequest =
   | { type: "CLEAR_ACTIVITY" }
   | { type: "SAVE_CURRENT_PAGE"; note?: string }
   | { type: "SAVE_ITEM"; item: CreateOrbitItemRequest; dedupeUrl?: string }
-  | { type: "PREVIEW_SYNC"; provider: SocialProvider }
+  | { type: "PREVIEW_SYNC"; provider: SocialProvider; limit?: number }
   | { type: "CANCEL_SYNC" }
   | { type: "SAVE_SYNC_PREVIEW"; provider: SocialProvider; items: SocialItem[] }
   | { type: "UPDATE_SETTINGS"; settings: SyncSettingsPatch };

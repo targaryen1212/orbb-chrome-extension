@@ -232,3 +232,9 @@ test("maps imported content to private Orbit URL items", () => {
   assert.equal(item.metadata?.idempotencyKey, "chrome-sync:preview-item-1");
   assert.equal(platformForUrl(item.source.url ?? ""), "instagram");
 });
+
+test("defaults and preserves the per-provider first-sync markers", () => {
+  assert.deepEqual(mergeStoredState({}).providerFirstSyncDone, {});
+  const state = mergeStoredState({ providerFirstSyncDone: { instagram: true } });
+  assert.deepEqual(state.providerFirstSyncDone, { instagram: true });
+});

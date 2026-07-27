@@ -109,6 +109,16 @@
             </div>
             <span id="syncSummary" class="section-status" role="status" aria-live="polite">Ready</span>
           </header>
+          <div class="import-amount">
+            <label for="importAmountSelect">Import the latest</label>
+            <select id="importAmountSelect" aria-label="How many of the latest saves to import">
+              <option value="5">5 saves</option>
+              <option value="10" selected>10 saves</option>
+              <option value="15">15 saves</option>
+              <option value="120">120 saves</option>
+              <option value="0">Everything</option>
+            </select>
+          </div>
           <progress id="syncProgress" class="progress-bar" max="1" aria-label="Social import progress" hidden></progress>
           <p id="syncMessage" class="inline-feedback" role="status" aria-live="polite" hidden></p>
           <ul class="source-list" aria-label="Social import providers">

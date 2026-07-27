@@ -13,6 +13,9 @@ export const DEFAULT_API_BASE_URL = "https://api.orbb.app/v2";
 export const SYNC_ALARM = "orbb-social-sync";
 export const MAX_DROP_BYTES = 10 * 1024 * 1024;
 export const MIN_AUTOMATIC_SYNC_MINUTES = 30;
+// A provider's first automatic sync seeds only the newest saves; every later
+// run scans newest-first and stops at the first already-synced item.
+export const FIRST_SYNC_SEED_COUNT = 3;
 
 export const DEFAULT_SETTINGS: SyncSettings = {
   enabled: false,
@@ -28,6 +31,7 @@ export const DEFAULT_STATE: StoredState = {
   settings: DEFAULT_SETTINGS,
   activity: [],
   capturedUrls: [],
+  providerFirstSyncDone: {},
   sync: { running: false, completed: 0, total: 0, automaticRetryPending: false },
 };
 
@@ -253,6 +257,7 @@ export function mergeStoredState(value: Partial<StoredState>): StoredState {
     },
     activity: value.activity ?? [],
     capturedUrls: value.capturedUrls ?? [],
+    providerFirstSyncDone: value.providerFirstSyncDone ?? {},
     sync: { ...DEFAULT_STATE.sync, ...value.sync },
   };
 }

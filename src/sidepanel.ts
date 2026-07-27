@@ -49,6 +49,7 @@ const elements = {
   dropZone: byId("dropZone"),
   fileInput: byId<HTMLInputElement>("fileInput"),
   scheduleSelect: byId<HTMLSelectElement>("scheduleSelect"),
+  importAmountSelect: byId<HTMLSelectElement>("importAmountSelect"),
   automationDescription: byId("automationDescription"),
   syncSummary: byId("syncSummary"),
   syncProgress: byId<HTMLProgressElement>("syncProgress"),
@@ -114,6 +115,19 @@ elements.clearActivityButton.addEventListener("click", () => void clearActivity(
 elements.feedbackDismissButton.addEventListener("click", () => dismissFeedback());
 elements.signOutButton.addEventListener("click", () => void signOut());
 elements.scheduleSelect.addEventListener("change", () => void updateSchedule());
+
+// Import-amount choice sticks across panel openings; it only shapes manual
+// imports, so it lives in panel localStorage rather than synced settings.
+const IMPORT_AMOUNT_KEY = "orbbImportAmount";
+{
+  const storedAmount = localStorage.getItem(IMPORT_AMOUNT_KEY);
+  if (storedAmount !== null && [...elements.importAmountSelect.options].some((option) => option.value === storedAmount)) {
+    elements.importAmountSelect.value = storedAmount;
+  }
+}
+elements.importAmountSelect.addEventListener("change", () => {
+  localStorage.setItem(IMPORT_AMOUNT_KEY, elements.importAmountSelect.value);
+});
 elements.dropZone.addEventListener("click", () => elements.fileInput.click());
 elements.fileInput.addEventListener("change", () => {
   if (elements.fileInput.files) void previewDroppedFiles([...elements.fileInput.files]);
@@ -537,7 +551,8 @@ async function runSync(provider: SocialProvider): Promise<void> {
   elements.syncMessage.hidden = true;
   showToast(`Collecting ${provider === "x" ? "X" : titleCase(provider)} saves for review…`);
   try {
-    const items = await send<SocialItem[]>({ type: "PREVIEW_SYNC", provider });
+    const limit = Number(elements.importAmountSelect.value) || 0;
+    const items = await send<SocialItem[]>({ type: "PREVIEW_SYNC", provider, limit });
     openSyncPreview(provider, items);
     showToast(`${items.length} item${items.length === 1 ? "" : "s"} captured — review before saving`);
   } catch (error) {
