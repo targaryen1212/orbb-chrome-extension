@@ -28,10 +28,10 @@ export interface SyncSettings {
   providers: Record<SocialProvider, boolean>;
   maxItemsPerProvider: number;
   /**
-   * Overrides the auto-detected Instagram saved page — point it at a single
-   * folder to collect only that one.
+   * Overrides the auto-detected Instagram saved page. Each entry is collected
+   * on its own schedule, hours apart, never in one burst.
    */
-  instagramUrl?: string;
+  instagramUrls?: string[];
   /** Any other page whose links should be collected. */
   customUrl?: string;
   /** What to call the custom source in the UI and activity feed. */
@@ -66,8 +66,16 @@ export interface StoredState {
   settings: SyncSettings;
   activity: ActivityItem[];
   capturedUrls: string[];
-  /** Providers whose seeding first sync completed; later runs stop at known items. */
-  providerFirstSyncDone: Partial<Record<SocialProvider, boolean>>;
+  /**
+   * Sources whose seeding first sync completed; later runs stop at known items.
+   * Keyed by source (a provider name, or one Instagram page URL).
+   */
+  providerFirstSyncDone: Partial<Record<string, boolean>>;
+  /**
+   * Earliest time each source may be collected again, so several Instagram
+   * pages never load together. Keyed the same way.
+   */
+  sourceNextDueAt: Partial<Record<string, number>>;
   sync: SyncState;
 }
 

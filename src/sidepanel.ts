@@ -3,6 +3,7 @@ import type { CreateOrbitItemRequest } from "@orbb/orbit-sdk";
 import {
   extractDroppedHttpUrl,
   MAX_DROP_BYTES,
+  MAX_INSTAGRAM_SOURCES,
   platformForUrl,
   DEFAULT_SETTINGS,
   providerOrigins,
@@ -70,7 +71,8 @@ const elements = {
   xToggle: byId<HTMLInputElement>("xToggle"),
   customToggle: byId<HTMLInputElement>("customToggle"),
   customToggleLabel: byId("customToggleLabel"),
-  instagramUrlInput: byId<HTMLInputElement>("instagramUrlInput"),
+  instagramSourceList: byId("instagramSourceList"),
+  addInstagramSourceButton: byId<HTMLButtonElement>("addInstagramSourceButton"),
   customNameInput: byId<HTMLInputElement>("customNameInput"),
   customUrlInput: byId<HTMLInputElement>("customUrlInput"),
   customSourceRow: byId("customSourceRow"),
@@ -109,6 +111,7 @@ let selectedPreviewUrls = new Set<string>();
 let dropPreviewItems: DropPreviewItem[] = [];
 let activeManualSyncProvider: SocialProvider | null = null;
 let manualSyncCancelled = false;
+let instagramDraftOpen = false;
 
 elements.connectButton.addEventListener("click", () => void beginLogin());
 elements.cancelLoginButton.addEventListener("click", () => void cancelLogin());
@@ -124,6 +127,10 @@ elements.clearActivityButton.addEventListener("click", () => void clearActivity(
 elements.feedbackDismissButton.addEventListener("click", () => dismissFeedback());
 elements.signOutButton.addEventListener("click", () => void signOut());
 elements.scheduleSelect.addEventListener("change", () => void updateSchedule());
+elements.addInstagramSourceButton.addEventListener("click", () => {
+  instagramDraftOpen = true;
+  renderInstagramSources(snapshot?.state.settings.instagramUrls ?? []);
+});
 
 // Import-amount choice sticks across panel openings; it only shapes manual
 // imports, so it lives in panel localStorage rather than synced settings.
@@ -177,7 +184,6 @@ for (const [provider, input] of [
 // Committing on blur rather than on every keystroke: the background validates
 // these and rejects a half-typed address.
 for (const [field, input] of [
-  ["instagramUrl", elements.instagramUrlInput],
   ["customUrl", elements.customUrlInput],
   ["customName", elements.customNameInput],
 ] as const) {
@@ -778,7 +784,7 @@ async function updateProvider(provider: SocialProvider, enabled: boolean): Promi
 }
 
 async function updateSourceField(
-  field: "instagramUrl" | "customUrl" | "customName",
+  field: "customUrl" | "customName",
   value: string,
 ): Promise<void> {
   try {
@@ -951,7 +957,7 @@ function renderSettings(state: UiStoredState): void {
   elements.customSourceName.textContent = customName;
   // Never overwrite a field mid-edit — the panel re-renders on every state
   // change, including ones this typing will cause.
-  setFieldValue(elements.instagramUrlInput, state.settings.instagramUrl ?? "");
+  renderInstagramSources(state.settings.instagramUrls ?? []);
   setFieldValue(elements.customUrlInput, state.settings.customUrl ?? "");
   setFieldValue(elements.customNameInput, state.settings.customName ?? "");
 
@@ -959,6 +965,74 @@ function renderSettings(state: UiStoredState): void {
   elements.customSourceRow.hidden = !customUrl;
   if (customUrl) {
     elements.customSourceHost.textContent = hostLabel(customUrl);
+  }
+}
+
+/**
+ * Draws one input per configured Instagram page, plus the empty row the
+ * "+ Add" button opens. The draft is not stored until it holds an address, so
+ * an abandoned row disappears rather than being saved as an empty source.
+ */
+function renderInstagramSources(urls: string[]): void {
+  const activeIndex = focusedInstagramSourceIndex();
+  if (activeIndex !== null) return;
+
+  elements.instagramSourceList.replaceChildren();
+  const rows = [...urls, ...(instagramDraftOpen ? [""] : [])];
+  rows.forEach((url, index) => {
+    const row = document.createElement("div");
+    row.className = "source-input-row";
+
+    const input = document.createElement("input");
+    input.type = "url";
+    input.inputMode = "url";
+    input.spellcheck = false;
+    input.placeholder = "https://www.instagram.com/you/saved/recipes/";
+    input.value = url;
+    input.dataset.sourceIndex = String(index);
+    input.setAttribute("aria-label", `Instagram page ${index + 1}`);
+    input.addEventListener("change", () => void commitInstagramSources());
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove-source-button";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `Remove Instagram page ${index + 1}`);
+    remove.addEventListener("click", () => {
+      row.remove();
+      instagramDraftOpen = false;
+      void commitInstagramSources();
+    });
+
+    row.append(input, remove);
+    elements.instagramSourceList.append(row);
+  });
+
+  elements.addInstagramSourceButton.disabled = rows.length >= MAX_INSTAGRAM_SOURCES;
+  if (instagramDraftOpen) {
+    const draft = elements.instagramSourceList.querySelector<HTMLInputElement>("input:last-of-type");
+    draft?.focus();
+  }
+}
+
+function focusedInstagramSourceIndex(): number | null {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLInputElement) || active.dataset.sourceIndex === undefined) return null;
+  return Number(active.dataset.sourceIndex);
+}
+
+async function commitInstagramSources(): Promise<void> {
+  const urls = [...elements.instagramSourceList.querySelectorAll<HTMLInputElement>("input")]
+    .map((input) => input.value.trim())
+    .filter(Boolean);
+  instagramDraftOpen = false;
+  try {
+    await send({ type: "UPDATE_SETTINGS", settings: { instagramUrls: urls } });
+    await refresh();
+    showToast(urls.length ? `${urls.length} Instagram page${urls.length === 1 ? "" : "s"} configured` : "Using every saved folder");
+  } catch (error) {
+    showToast(errorMessage(error), true);
+    await refresh();
   }
 }
 

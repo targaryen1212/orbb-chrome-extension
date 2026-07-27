@@ -8,8 +8,14 @@ import {
   isSocialPostUrl,
   jitteredDelayMs,
   jitteredSyncDelayMinutes,
+  dueSource,
+  INSTAGRAM_AUTO_SOURCE,
+  instagramSourceKeys,
+  nextSourceDelayMs,
   normalizeCustomSourceUrl,
   normalizeInstagramSourceUrl,
+  normalizeInstagramSourceUrls,
+  pruneSourceSchedule,
   normalizeSavedUrl,
   providerDisplayName,
   providerOrigins,
@@ -266,7 +272,11 @@ test("routes collection to the configured source pages", () => {
   // A custom source with no address must not open a blank tab.
   assert.equal(providerStartPage("custom", base), null);
 
-  const configured = { ...base, instagramUrl: "https://www.instagram.com/me/saved/food/", customUrl: "https://example.com/links" };
+  const configured = {
+    ...base,
+    instagramUrls: ["https://www.instagram.com/me/saved/food/"],
+    customUrl: "https://example.com/links",
+  };
   assert.equal(providerStartPage("instagram", configured), "https://www.instagram.com/me/saved/food/");
   assert.equal(providerStartPage("custom", configured), "https://example.com/links");
 });
@@ -287,14 +297,69 @@ test("discards stored source addresses that no longer parse", () => {
   const state = mergeStoredState({
     settings: {
       ...mergeStoredState({}).settings,
-      instagramUrl: "https://evil.example.com/saved/",
+      instagramUrls: ["https://evil.example.com/saved/", "https://www.instagram.com/me/saved/a/"],
       customUrl: "javascript:alert(1)",
       customName: "  Reading list  ",
     },
   });
-  assert.equal(state.settings.instagramUrl, undefined);
+  // The instagram.com entry survives; the impostor is dropped.
+  assert.deepEqual(state.settings.instagramUrls, ["https://www.instagram.com/me/saved/a/"]);
   assert.equal(state.settings.customUrl, undefined);
   assert.equal(state.settings.customName, "Reading list");
+});
+
+test("migrates a single stored Instagram page to the multi-page list", () => {
+  const state = mergeStoredState({
+    settings: {
+      ...mergeStoredState({}).settings,
+      instagramUrl: "https://www.instagram.com/me/saved/food/",
+    } as never,
+  });
+  assert.deepEqual(state.settings.instagramUrls, ["https://www.instagram.com/me/saved/food/"]);
+});
+
+test("validates and de-duplicates a list of Instagram pages", () => {
+  assert.deepEqual(
+    normalizeInstagramSourceUrls([
+      " https://www.instagram.com/me/saved/a/ ",
+      "",
+      "https://www.instagram.com/me/saved/a/",
+      "https://www.instagram.com/me/saved/b/",
+    ]),
+    ["https://www.instagram.com/me/saved/a/", "https://www.instagram.com/me/saved/b/"],
+  );
+  assert.throws(() => normalizeInstagramSourceUrls(["https://example.com/x"]), /not an instagram\.com address/);
+});
+
+test("collects one Instagram page per run and defers the rest by hours", () => {
+  const settings = {
+    ...mergeStoredState({}).settings,
+    instagramUrls: ["https://www.instagram.com/me/saved/a/", "https://www.instagram.com/me/saved/b/"],
+  };
+  const keys = instagramSourceKeys(settings);
+  assert.deepEqual(keys, settings.instagramUrls);
+  assert.deepEqual(instagramSourceKeys(mergeStoredState({}).settings), [INSTAGRAM_AUTO_SOURCE]);
+
+  const now = 10_000_000;
+  // Nothing collected yet: the first configured page goes first.
+  assert.equal(dueSource(keys, {}, now), keys[0]);
+  // Once it is deferred, the run picks the other page rather than repeating.
+  const afterFirst = { [keys[0]!]: now + 3_600_000 };
+  assert.equal(dueSource(keys, afterFirst, now), keys[1]);
+  // With both deferred, no Instagram page runs at all this time.
+  assert.equal(dueSource(keys, { ...afterFirst, [keys[1]!]: now + 60_000 }, now), null);
+  // A page whose wait has elapsed becomes eligible again.
+  assert.equal(dueSource(keys, { [keys[0]!]: now - 1, [keys[1]!]: now + 60_000 }, now), keys[0]);
+
+  // Deferrals land between one and six hours out, and vary between sources.
+  assert.equal(nextSourceDelayMs(() => 0), 3_600_000);
+  assert.equal(nextSourceDelayMs(() => 1), 21_600_000);
+  assert.notEqual(nextSourceDelayMs(() => 0.2), nextSourceDelayMs(() => 0.8));
+
+  assert.deepEqual(
+    pruneSourceSchedule({ [keys[0]!]: 1, "https://www.instagram.com/me/saved/gone/": 2 }, keys),
+    { [keys[0]!]: 1 },
+  );
 });
 
 test("labels and matches items from a custom source", () => {

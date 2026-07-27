@@ -236,10 +236,11 @@
 
         <fieldset class="settings-group settings-fields">
           <legend>Where to collect from</legend>
-          <label class="field-row" for="instagramUrlInput">
-            <span class="row-copy"><strong>Instagram page</strong><small>Leave empty to use every saved folder in the signed-in account</small></span>
-            <input id="instagramUrlInput" type="url" inputmode="url" spellcheck="false" placeholder="https://www.instagram.com/you/saved/recipes/" />
-          </label>
+          <div class="field-row">
+            <span class="row-copy"><strong>Instagram pages</strong><small>Leave empty to use every saved folder in the signed-in account. Background collection visits one page per run, hours apart.</small></span>
+            <div id="instagramSourceList" class="source-inputs"></div>
+            <button id="addInstagramSourceButton" class="secondary-button compact-button" type="button">+ Add Instagram page</button>
+          </div>
           <label class="field-row" for="customNameInput">
             <span class="row-copy"><strong>Custom source name</strong><small>Shown in imports and activity</small></span>
             <input id="customNameInput" type="text" maxlength="60" placeholder="Reading list" />

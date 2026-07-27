@@ -7,9 +7,14 @@ import {
   enqueuePendingRevocation,
   instagramSavedPageForUsername,
   isSocialPostUrl,
+  dueSource,
+  INSTAGRAM_AUTO_SOURCE,
+  instagramSourceKeys,
   jitteredDelayMs,
+  nextSourceDelayMs,
   normalizeCustomSourceUrl,
-  normalizeInstagramSourceUrl,
+  normalizeInstagramSourceUrls,
+  pruneSourceSchedule,
   providerDisplayName,
   providerOrigins,
   providerStartPage,
@@ -525,12 +530,9 @@ async function updateSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
     maxItemsPerProvider: normalizeSyncLimit(patch.maxItemsPerProvider ?? state.settings.maxItemsPerProvider),
   };
 
-  if (patch.instagramUrl !== undefined) {
-    settings.instagramUrl = patch.instagramUrl.trim()
-      ? normalizeInstagramSourceUrl(patch.instagramUrl) ?? throwSettingError(
-          "Enter an instagram.com address, like https://www.instagram.com/<account>/saved/<folder>/.",
-        )
-      : undefined;
+  if (patch.instagramUrls !== undefined) {
+    const urls = normalizeInstagramSourceUrls(patch.instagramUrls);
+    settings.instagramUrls = urls.length > 0 ? urls : undefined;
   }
   if (patch.customUrl !== undefined) {
     settings.customUrl = patch.customUrl.trim()
@@ -548,6 +550,14 @@ async function updateSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
   }
 
   state.settings = settings;
+  // A removed page should not keep a schedule slot, and a newly added one must
+  // start due so it is picked up on the next run rather than hours later.
+  state.sourceNextDueAt = pruneSourceSchedule(state.sourceNextDueAt, [
+    ...instagramSourceKeys(settings),
+    "reddit",
+    "x",
+    "custom",
+  ]);
   await setState(state);
   await restoreAlarm();
   return state.settings;
@@ -581,7 +591,12 @@ async function previewSocialSync(provider: SocialProvider, limit?: number): Prom
   try {
     // The panel's "import the latest N" choice; zero or absent collects the
     // whole feed, matching the maxItemsPerProvider convention.
-    const items = await collectProvider(provider, state.settings, limit ?? state.settings.maxItemsPerProvider);
+    const providerLimit = limit ?? state.settings.maxItemsPerProvider;
+    // A manual import is explicit and reviewed before saving, so it visits
+    // every configured Instagram page instead of one per run.
+    const items = provider === "instagram"
+      ? await collectInstagramSources(state.settings, providerLimit)
+      : await collectProvider(provider, state.settings, providerLimit);
     const markedItems = await markAlreadySaved(items);
     state = await getState();
     state.sync = {
@@ -737,10 +752,19 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
     await requireFreshAuth(state);
     for (const provider of providers) {
       state = await getState();
+      // Instagram can have several pages configured. Exactly one runs now and
+      // the others wait hours, so a run never fans out across all of them.
+      const sourceKey = provider === "instagram"
+        ? dueSource(instagramSourceKeys(state.settings), state.sourceNextDueAt, Date.now())
+        : provider;
+      if (!sourceKey) continue;
+      const sourceUrl = provider === "instagram" && sourceKey !== INSTAGRAM_AUTO_SOURCE
+        ? sourceKey
+        : undefined;
       state.sync.provider = provider;
       await setState(state);
       try {
-        const firstRun = !state.providerFirstSyncDone[provider];
+        const firstRun = !state.providerFirstSyncDone[sourceKey];
         // The first run only seeds the newest saves; afterwards every synced
         // URL sits in capturedUrls, so later runs stop scanning at the first
         // known item instead of re-walking the whole saved feed.
@@ -752,7 +776,7 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
         const stopUrls = firstRun
           ? []
           : state.capturedUrls.filter((url) => isSocialPostUrl(provider, url));
-        const items = await collectProvider(provider, state.settings, providerLimit, stopUrls);
+        const items = await collectProvider(provider, state.settings, providerLimit, stopUrls, sourceUrl);
         const existingUrls = await existingSourceUrls(items.map((item) => item.url));
         let providerSaved = 0;
         let providerSkipped = 0;
@@ -780,7 +804,7 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
           await delay(jitteredDelayMs(250));
         }
         if (!syncCancellationRequested) {
-          await markProviderSynced(provider, items.map((item) => item.url));
+          await markProviderSynced(sourceKey, items.map((item) => item.url));
         }
         await addActivity({
           title: `${providerLabel(provider, state.settings)} automatic sync complete`,
@@ -799,6 +823,10 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
           platform: provider,
           status: "failed",
         });
+      } finally {
+        // Booked even when the run failed, so a page that keeps erroring does
+        // not monopolise every scheduled run.
+        await deferSource(sourceKey);
       }
     }
 
@@ -841,13 +869,36 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
  * point (they abort the provider), so an item that failed to upload stays
  * unknown and is retried on the next run.
  */
-async function markProviderSynced(provider: SocialProvider, rawUrls: string[]): Promise<void> {
+async function markProviderSynced(sourceKey: string, rawUrls: string[]): Promise<void> {
   const state = await getState();
   const urls = rawUrls
     .map((url) => normalizeSavedUrl(url))
     .filter((url): url is string => Boolean(url));
   state.capturedUrls = [...new Set([...urls, ...state.capturedUrls])].slice(0, MAX_CAPTURED_URLS);
-  state.providerFirstSyncDone = { ...state.providerFirstSyncDone, [provider]: true };
+  state.providerFirstSyncDone = { ...state.providerFirstSyncDone, [sourceKey]: true };
+  await setState(state);
+}
+
+/** Visits every configured Instagram page, newest pages first, up to the limit. */
+async function collectInstagramSources(settings: SyncSettings, limit: number): Promise<SocialItem[]> {
+  const collected: SocialItem[] = [];
+  for (const sourceKey of instagramSourceKeys(settings)) {
+    if (limit > 0 && collected.length >= limit) break;
+    throwIfSyncCancelled();
+    const remaining = limit > 0 ? limit - collected.length : 0;
+    const sourceUrl = sourceKey === INSTAGRAM_AUTO_SOURCE ? undefined : sourceKey;
+    collected.push(...await collectProvider("instagram", settings, remaining, [], sourceUrl));
+  }
+  return collected;
+}
+
+/** Holds a source back for a random number of hours before its next run. */
+async function deferSource(sourceKey: string): Promise<void> {
+  const state = await getState();
+  state.sourceNextDueAt = {
+    ...state.sourceNextDueAt,
+    [sourceKey]: Date.now() + nextSourceDelayMs(),
+  };
   await setState(state);
 }
 
@@ -909,8 +960,9 @@ async function collectProvider(
   settings: SyncSettings,
   limit: number,
   stopUrls: string[] = [],
+  sourceUrl?: string,
 ): Promise<SocialItem[]> {
-  const startPage = providerStartPage(provider, settings);
+  const startPage = sourceUrl ?? providerStartPage(provider, settings);
   if (!startPage) {
     throw new Error(`Add a page address for ${providerLabel(provider, settings)} in settings.`);
   }
@@ -930,7 +982,7 @@ async function collectProvider(
     throwIfSyncCancelled();
     // A configured Instagram URL already points at the right saved page, so
     // the account-detection round trip is skipped entirely.
-    if (provider === "instagram" && !settings.instagramUrl) {
+    if (provider === "instagram" && startPage === PROVIDER_PAGES.instagram) {
       const usernameResults = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: "MAIN",

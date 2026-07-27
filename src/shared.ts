@@ -34,6 +34,7 @@ export const DEFAULT_STATE: StoredState = {
   activity: [],
   capturedUrls: [],
   providerFirstSyncDone: {},
+  sourceNextDueAt: {},
   sync: { running: false, completed: 0, total: 0, automaticRetryPending: false },
 };
 
@@ -153,8 +154,73 @@ export const PROVIDER_ORIGINS: Record<BuiltInSocialProvider, string[]> = {
  */
 export function providerStartPage(provider: SocialProvider, settings: SyncSettings): string | null {
   if (provider === "custom") return settings.customUrl ?? null;
-  if (provider === "instagram") return settings.instagramUrl ?? PROVIDER_PAGES.instagram;
+  if (provider === "instagram") return settings.instagramUrls?.[0] ?? PROVIDER_PAGES.instagram;
   return PROVIDER_PAGES[provider];
+}
+
+/** Stands in for "whichever account is signed in" when no page is configured. */
+export const INSTAGRAM_AUTO_SOURCE = "instagram:auto";
+export const MAX_INSTAGRAM_SOURCES = 10;
+/** A source waits at least this long, and at most this long, between runs. */
+export const MIN_SOURCE_STAGGER_HOURS = 1;
+export const MAX_SOURCE_STAGGER_HOURS = 6;
+
+/** Every Instagram page to collect, as stable schedule keys. */
+export function instagramSourceKeys(settings: SyncSettings): string[] {
+  const urls = settings.instagramUrls ?? [];
+  return urls.length > 0 ? urls : [INSTAGRAM_AUTO_SOURCE];
+}
+
+/**
+ * Picks the one source to collect this run, or null when none is due yet.
+ *
+ * Collecting every configured page back to back is exactly the burst that
+ * makes automation obvious, so a run takes a single page and the rest wait
+ * their turn. Ties resolve in configured order, so a new page is not starved.
+ */
+export function dueSource(
+  keys: string[],
+  schedule: Partial<Record<string, number>>,
+  now: number,
+): string | null {
+  let due: string | null = null;
+  let dueAt = Number.POSITIVE_INFINITY;
+  for (const key of keys) {
+    const keyDueAt = schedule[key] ?? 0;
+    if (keyDueAt <= now && keyDueAt < dueAt) {
+      due = key;
+      dueAt = keyDueAt;
+    }
+  }
+  return due;
+}
+
+/** A random whole-ish number of hours before this source may run again. */
+export function nextSourceDelayMs(random: () => number = Math.random): number {
+  const hours = MIN_SOURCE_STAGGER_HOURS
+    + random() * (MAX_SOURCE_STAGGER_HOURS - MIN_SOURCE_STAGGER_HOURS);
+  return Math.round(hours * 3_600_000);
+}
+
+/** Drops schedule entries for sources that are no longer configured. */
+export function pruneSourceSchedule(
+  schedule: Partial<Record<string, number>>,
+  keys: Iterable<string>,
+): Partial<Record<string, number>> {
+  const kept = new Set(keys);
+  return Object.fromEntries(Object.entries(schedule).filter(([key]) => kept.has(key)));
+}
+
+/** Validates, trims and de-duplicates the configured Instagram pages. */
+export function normalizeInstagramSourceUrls(rawValues: string[]): string[] {
+  const seen = new Set<string>();
+  for (const rawValue of rawValues) {
+    if (!rawValue.trim()) continue;
+    const url = normalizeInstagramSourceUrl(rawValue);
+    if (!url) throw new Error(`"${rawValue.trim()}" is not an instagram.com address.`);
+    seen.add(url);
+  }
+  return [...seen].slice(0, MAX_INSTAGRAM_SOURCES);
 }
 
 /** Accepts any instagram.com page, so a single saved folder can be targeted. */
@@ -336,9 +402,7 @@ export function mergeStoredState(value: Partial<StoredState>): StoredState {
       providers: { ...DEFAULT_SETTINGS.providers, ...value.settings?.providers },
       // Stored URLs are re-validated on read: a value that no longer parses
       // would otherwise send collection to a blank or hostile page.
-      instagramUrl: value.settings?.instagramUrl
-        ? normalizeInstagramSourceUrl(value.settings.instagramUrl) ?? undefined
-        : undefined,
+      instagramUrls: storedInstagramUrls(value.settings),
       customUrl: value.settings?.customUrl
         ? normalizeCustomSourceUrl(value.settings.customUrl) ?? undefined
         : undefined,
@@ -347,8 +411,24 @@ export function mergeStoredState(value: Partial<StoredState>): StoredState {
     activity: value.activity ?? [],
     capturedUrls: value.capturedUrls ?? [],
     providerFirstSyncDone: value.providerFirstSyncDone ?? {},
+    sourceNextDueAt: value.sourceNextDueAt ?? {},
     sync: { ...DEFAULT_STATE.sync, ...value.sync },
   };
+}
+
+/**
+ * Reads the stored Instagram pages, dropping any that no longer parse.
+ *
+ * Also migrates the single `instagramUrl` this replaced, so an existing
+ * override survives the upgrade instead of silently reverting to auto-detect.
+ */
+function storedInstagramUrls(settings: Partial<SyncSettings> | undefined): string[] | undefined {
+  const legacyUrl = (settings as { instagramUrl?: string } | undefined)?.instagramUrl;
+  const rawUrls = settings?.instagramUrls ?? (legacyUrl ? [legacyUrl] : []);
+  const urls = rawUrls
+    .map((url) => normalizeInstagramSourceUrl(url))
+    .filter((url): url is string => Boolean(url));
+  return urls.length > 0 ? [...new Set(urls)].slice(0, MAX_INSTAGRAM_SOURCES) : undefined;
 }
 
 export function shouldRetryAutomaticSyncOnStartup(state: StoredState): boolean {
