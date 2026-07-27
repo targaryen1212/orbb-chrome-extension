@@ -27,7 +27,9 @@
     </div>
 
     <main>
-      <section id="loginView" class="view login-view" aria-labelledby="loginTitle">
+      <!-- Both views start hidden: the panel does not know yet whether this
+           browser is connected, and guessing paints the wrong screen first. -->
+      <section id="loginView" class="view login-view" aria-labelledby="loginTitle" hidden>
         <header class="view-heading login-heading">
           <p class="overline">Orbb for Chrome</p>
           <h1 id="loginTitle">Save anything. Find it in Orbb.</h1>

@@ -857,6 +857,9 @@ async function refresh(): Promise<void> {
     render(snapshot);
   } catch (error) {
     showToast(errorMessage(error), true);
+    // Both views start hidden, so a snapshot that never arrives would leave an
+    // empty panel. Fall back to the connect screen, which is always actionable.
+    if (!snapshot) elements.loginView.hidden = false;
   }
 }
 
