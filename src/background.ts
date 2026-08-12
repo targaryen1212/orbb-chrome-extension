@@ -61,6 +61,10 @@ const startupRecovery = recoverInterruptedSyncOnWorkerStart().catch(
   () => undefined,
 );
 void retryPendingRevocations().catch(() => undefined);
+// Every reason the worker wakes is also a chance to notice that scheduled
+// collection lost its alarm — a run stopped with the worker used to leave none
+// behind, and nothing rebooked it until Chrome restarted.
+void startupRecovery.then(() => ensureAlarmScheduled()).catch(() => undefined);
 
 chrome.runtime.onInstalled.addListener(() => {
   void initializeExtension();
@@ -81,18 +85,49 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 /**
- * Runs a scheduled sync, then books the next one at a fresh random offset.
+ * Books the next run at a fresh random offset, then syncs.
  *
- * The alarm is one-shot by design, so rescheduling has to happen even when the
- * run throws — otherwise a single failure would end automatic collection.
+ * The alarm is one-shot by design, and the next one is booked *before* the run
+ * rather than in a `finally` after it: Chrome can stop the worker mid-run, and
+ * a `finally` that never executes would leave no alarm at all, ending automatic
+ * collection until the browser restarted or a setting changed.
  */
 async function runScheduledSync(): Promise<void> {
+  await restoreAlarm();
   try {
-    await runAutomaticSync();
+    await withWorkerKeepalive(runAutomaticSync);
   } catch {
     // runAutomaticSync already records the failure in state and activity.
+  }
+}
+
+/**
+ * Holds the service worker open for the length of a long run.
+ *
+ * Chrome stops an idle MV3 worker after 30 seconds, and the alarm listener
+ * returns long before the collection it starts finishes. While the side panel
+ * is open its poll kept resetting that countdown, so scheduled collection
+ * appeared to work; with the panel closed a run was cut off partway through a
+ * feed. A cheap extension API call on a timer keeps the worker up for as long
+ * as there is outstanding work.
+ */
+const KEEPALIVE_INTERVAL_MS = 20_000;
+let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
+let keepaliveHolders = 0;
+
+async function withWorkerKeepalive<T>(run: () => Promise<T>): Promise<T> {
+  keepaliveHolders += 1;
+  keepaliveTimer ??= setInterval(() => {
+    void chrome.runtime.getPlatformInfo().catch(() => undefined);
+  }, KEEPALIVE_INTERVAL_MS);
+  try {
+    return await run();
   } finally {
-    await restoreAlarm();
+    keepaliveHolders -= 1;
+    if (keepaliveHolders <= 0 && keepaliveTimer !== undefined) {
+      clearInterval(keepaliveTimer);
+      keepaliveTimer = undefined;
+    }
   }
 }
 
@@ -139,7 +174,7 @@ async function handleBrowserStartup(): Promise<void> {
       platform: "chrome",
       status: "syncing",
     });
-    await runAutomaticSync();
+    await withWorkerKeepalive(runAutomaticSync);
   } catch (error) {
     state = await getState();
     state.sync = {
@@ -173,11 +208,13 @@ async function handleRequest(request: BackgroundRequest): Promise<unknown> {
     case "SAVE_ITEM":
       return saveItem(request.item, { dedupeUrl: request.dedupeUrl, recordActivity: true });
     case "PREVIEW_SYNC":
-      return previewSocialSync(request.provider, request.limit);
+      // The panel can be closed while an import is still walking a feed, and
+      // its poll is what was keeping this worker awake.
+      return withWorkerKeepalive(() => previewSocialSync(request.provider, request.limit));
     case "CANCEL_SYNC":
       return cancelSync();
     case "SAVE_SYNC_PREVIEW":
-      return saveSyncPreview(request.provider, request.items);
+      return withWorkerKeepalive(() => saveSyncPreview(request.provider, request.items));
     case "UPDATE_SETTINGS":
       return updateSettings(request.settings);
   }
@@ -570,6 +607,22 @@ function throwSettingError(message: string): never {
 async function restoreAlarm(): Promise<void> {
   const state = await getState();
   await chrome.alarms.clear(SYNC_ALARM);
+  const schedule = automaticSyncAlarmSchedule(state.settings);
+  if (schedule) await chrome.alarms.create(SYNC_ALARM, schedule);
+}
+
+/**
+ * Recreates a missing alarm without disturbing one that is already pending.
+ *
+ * Runs on every worker start, so scheduled collection recovers by itself the
+ * next time anything wakes the extension. Unlike restoreAlarm it never clears
+ * first — that would push the next run further out on every worker start, and
+ * collection would never come due.
+ */
+async function ensureAlarmScheduled(): Promise<void> {
+  const state = await getState();
+  if (!state.settings.enabled) return;
+  if (await chrome.alarms.get(SYNC_ALARM)) return;
   const schedule = automaticSyncAlarmSchedule(state.settings);
   if (schedule) await chrome.alarms.create(SYNC_ALARM, schedule);
 }
