@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Orbb — Save anything",
   "short_name": "Orbb",
-  "version": "1.1.4",
+  "version": "1.2.1",
   "description": "Save pages, links, images, files, and social bookmarks to Orbb from Chrome's side panel.",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwz2wlo534Px/dMS19y/Vuct7O8/OjQdHHAKBLLExDE333KNeaLd7nanEXSiCO7V25yyLb2Tf9/74/y54JUGl28HBwdAOKwwEIe8p/a+pC/g5xwLBpvxbc+QBX4UTXVxi+6DRTesORP0hwtKzykR0my5V2oCj9dJByutK++5zEQiVBW9mctRMrkmwHq0rswP3OzaeaR+SW7aqmmYIV5Edl3hgGZW8/3YdDzpXecrsLl5T9a3AfOyE/wXQmryw6z/yGzdpWcl0ByIaPMq45GUTaz1egEPWTxTQDLTbpBM+V33jDKSuGZDfR9JotJLvlBR7JGPg0RjqYzLqhYdIpocJkQIDAQAB",
