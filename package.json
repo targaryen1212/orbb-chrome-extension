@@ -1,6 +1,6 @@
 {
   "name": "orbb-chrome-extension",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -19,7 +19,7 @@
     "package:release": "npm run check:public && npm run check && node scripts/package-release.mjs"
   },
   "dependencies": {
-    "@orbb/orbit-sdk": "0.4.0",
+    "@orbb/orbit-sdk": "0.4.1",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
