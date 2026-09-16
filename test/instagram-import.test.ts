@@ -11,13 +11,18 @@ const compiled = ts.transpileModule(collector, { compilerOptions: { target: ts.S
 async function scan(folderStatus: number, savedStatus = 200) {
   const requests: string[] = [];
   const result = await runInNewContext(compiled + '\ncollectSocialItemsInPage("instagram", 0, 30000, [])', {
-    URL, URLSearchParams, setTimeout,
-    document: { cookie: '' },
+    URL, URLSearchParams, setTimeout: (fn: () => void) => { fn(); },
+    window: { scrollTo() {} },
+    document: { cookie: '', scrollingElement: { scrollHeight: 1000 }, querySelectorAll: () => folderStatus === 200 ? [
+      ['all-posts/', 'All posts'], ['recipes/123/', 'Recipes'], ['recipes/123/', 'Recipes'],
+      ['audio/', 'Audio'], ['audio/456/', 'Audio'], ['other/789/', ' Audio '],
+    ].map(([path, title]) => ({ href: `https://www.instagram.com/test/saved/${path}`, textContent: title, getAttribute: () => null })) : [] },
     location: { href: 'https://www.instagram.com/test/saved/all-posts/' },
     fetch: async (url: string) => {
       requests.push(url);
       const isFolders = url.includes('/collections/list/');
-      const status = isFolders ? folderStatus : savedStatus;
+      assert.equal(isFolders, false, 'Must not use the removed folder-list endpoint');
+      const status = savedStatus;
       return { ok: status === 200, status, json: async () => isFolders
         ? { items: [{ collection_id: 'recipes', collection_name: 'Recipes', collection_type: 'MEDIA' }] }
         : { items: [{ media: { code: 'ABC', caption: { text: 'Saved post' } } }], more_available: false } };
@@ -34,10 +39,14 @@ test('folder discovery failure still imports All saved with an explicit warning'
   assert.ok(requests.some(url => url.includes('/feed/saved/posts/')));
 });
 test('available folders retain their names without a fallback warning', async () => {
-  const { result } = await scan(200);
+  const { result, requests } = await scan(200);
   assert.equal(result.ok, true);
   assert.equal(result.items[0].collection, 'Recipes');
   assert.equal(result.warning, undefined);
+  assert.equal(result.items.length, 2);
+  assert.equal(requests.filter(url => url.includes('/feed/collection/')).length, 1);
+  assert.ok(requests.some(url => url.includes('/feed/collection/123/posts/')));
+  assert.ok(!requests.some(url => /456|789|audio/.test(url)));
 });
 test('failure of All saved remains an error rather than a successful empty import', async () => {
   const { result } = await scan(403, 401);

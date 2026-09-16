@@ -1053,7 +1053,12 @@ async function collectProvider(
   stopUrls: string[] = [],
   sourceUrl?: string,
 ): Promise<SocialItem[]> {
-  const startPage = sourceUrl ?? providerStartPage(provider, settings);
+  let startPage = sourceUrl ?? providerStartPage(provider, settings);
+  if (provider === "instagram" && startPage) {
+    const url = new URL(startPage);
+    const saved = url.pathname.match(/^\/([^/]+)\/saved(?:\/|$)/);
+    if (saved) startPage = `${url.origin}/${saved[1]}/saved/`;
+  }
   if (!startPage) {
     throw new Error(`Add a page address for ${providerLabel(provider, settings)} in settings.`);
   }
@@ -1082,7 +1087,7 @@ async function collectProvider(
       const username = usernameResults[0]?.result;
       const savedPage = typeof username === "string" ? instagramSavedPageForUsername(username) : null;
       if (!savedPage) throw new Error("Could not determine the Instagram account signed into Chrome.");
-      await chrome.tabs.update(tab.id, { url: savedPage });
+      await chrome.tabs.update(tab.id, { url: savedPage.replace(/all-posts\/$/, "") });
       await waitForTab(tab.id, 30_000);
       throwIfSyncCancelled();
     }
@@ -1228,16 +1233,44 @@ function collectSocialItemsInPage(
     };
 
     const folders: Array<{ id: string; title: string }> = [];
-    try {
-      const params = new URLSearchParams({ collection_types: '["MEDIA","ALL_MEDIA_AUTO_COLLECTION"]' });
-      const data = await getJson(`https://www.instagram.com/api/v1/collections/list/?${params}`);
-      for (const value of data.items || []) {
-        const id = String(value.collection_id || "");
-        const title = clean(value.collection_name || "", "Instagram folder");
-        const type = String(value.collection_type || "").toUpperCase();
-        if (id && type !== "ALL_MEDIA_AUTO_COLLECTION" && !/^audio$/i.test(title)) folders.push({ id, title });
+    const seenFolders = new Set<string>();
+    const savedRoot = new URL(location.href).pathname.match(/^\/([^/]+)\/saved(?:\/|$)/);
+    let sawSavedNavigation = false;
+    const readFolderLinks = () => {
+      for (const anchor of document.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+        const url = new URL(anchor.href, location.href);
+        if (url.origin !== new URL(location.href).origin) continue;
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (!savedRoot || parts[0] !== savedRoot[1] || parts[1] !== "saved") continue;
+        if (parts[2] === "all-posts") sawSavedNavigation = true;
+        const slug = parts[2];
+        const id = parts[3];
+        if (parts.length !== 4 || !slug || !id || !/^\d+$/.test(id)) continue;
+        const title = clean(anchor.textContent || anchor.getAttribute("aria-label") || "", "Instagram folder");
+        // Audio is a special Instagram saved folder, not a post collection.
+        if (slug.toLowerCase() === "audio" || /^audio$/i.test(title)) continue;
+        if (seenFolders.has(id)) continue;
+        seenFolders.add(id);
+        folders.push({ id, title });
       }
-    } catch {
+    };
+    // Saved is a client-rendered page. Wait for its links, then reveal lazy-loaded cards.
+    for (let attempt = 0; attempt < 20 && !budgetExpired(); attempt += 1) {
+      readFolderLinks();
+      if (sawSavedNavigation || folders.length > 0) break;
+      await sleep(300);
+    }
+    if (sawSavedNavigation || folders.length > 0) {
+      let stagnant = 0;
+      for (let pass = 0; pass < 30 && stagnant < 3 && !budgetExpired(); pass += 1) {
+        const previousCount = folders.length;
+        const root = document.scrollingElement || document.documentElement;
+        window.scrollTo({ top: root.scrollHeight, behavior: "instant" });
+        await sleep(350);
+        readFolderLinks();
+        stagnant = folders.length === previousCount ? stagnant + 1 : 0;
+      }
+    } else {
       warning = "Instagram folders could not be loaded. Importing All saved without folder memberships. You can rescan later to sync folders.";
     }
     folders.push({ id: "all-posts", title: "All saved" });
