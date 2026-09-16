@@ -1,3 +1,4 @@
+import { errorMessage } from "./errors";
 import QRCode from "qrcode";
 import type { CreateOrbitItemRequest } from "@orbb/orbit-sdk";
 import {
@@ -581,7 +582,10 @@ async function runSync(provider: SocialProvider): Promise<void> {
     const limit = Number(elements.importAmountSelect.value) || 0;
     const items = await send<SocialItem[]>({ type: "PREVIEW_SYNC", provider, limit });
     openSyncPreview(provider, items);
-    showToast(`${items.length} item${items.length === 1 ? "" : "s"} captured — review before saving`);
+    const snapshot = await send<Snapshot>({ type: "GET_SNAPSHOT" });
+    const warning = snapshot.state.sync.lastWarning;
+    if (warning) elements.previewActionStatus.textContent = warning;
+    showToast(warning ?? `${items.length} item${items.length === 1 ? "" : "s"} captured — review before saving`, Boolean(warning));
   } catch (error) {
     if (!manualSyncCancelled && errorMessage(error) !== "Sync cancelled.") showToast(errorMessage(error), true);
   } finally {
@@ -938,12 +942,10 @@ function renderSync(state: UiStoredState): void {
     elements.syncSummary.textContent = state.sync.lastRunAt ? `Synced ${relativeTime(state.sync.lastRunAt)}` : "Ready";
     resetProgress(elements.syncProgress);
   }
-  elements.syncMessage.hidden = !state.sync.lastError;
+  elements.syncMessage.hidden = !state.sync.lastError && !state.sync.lastWarning;
   elements.syncMessage.textContent = state.sync.lastError
-    ? state.sync.automaticRetryPending
-      ? "The last scheduled collection was interrupted. Chrome will retry it automatically."
-      : "The last collection did not finish. You can try importing again."
-    : "";
+    ? errorMessage(new Error(state.sync.lastError))
+    : state.sync.lastWarning ?? "";
   elements.scheduleSelect.value = state.settings.enabled ? String(state.settings.frequencyMinutes) : "0";
   elements.automationDescription.textContent = state.settings.enabled
     ? `${scheduleLabel(state.settings.frequencyMinutes)} — may open inactive tabs`
@@ -1230,33 +1232,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function errorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const message = raw.toLowerCase();
-  if (message.includes("sync cancelled")) return "Sync cancelled.";
-  if (message.includes("session expired")) return "Your Orbb session expired. Connect again with a new QR code.";
-  if (message.includes("connect orbb before")) return "Connect Orbb before saving.";
-  if (message.includes("chrome page cannot")) return "This Chrome page cannot be saved.";
-  if (message.includes("another sync")) return "Another import is already running.";
-  if (message.includes("select at least")) return "Select at least one captured item to save.";
-  if (message.includes("no link was available")) return "No supported link was available to save.";
-  if (message.includes("larger than 10 mb")) return raw;
-  if (message.includes("instagram") && (message.includes("logged in") || message.includes("account") || message.includes("returned"))) {
-    return "Open Instagram in Chrome, confirm you are signed in, then try again.";
-  }
-  if (message.includes("no reddit saves") || message.includes("no x saves")) {
-    return "No saved items were visible. Confirm you are signed in to the provider and try again.";
-  }
-  if (message.includes("saved-items page took too long")) return "The saved-items page took too long to load. Try again.";
-  if (message.includes("saved-items tab was closed")) return "The inactive collection tab was closed. Try the import again.";
-  if (message.includes("could not read") && message.includes("saves")) {
-    return "Could not read saved items from this provider. Confirm you are signed in and try again.";
-  }
-  if (message.includes("start qr login") || message.includes("login code")) {
-    return "Could not continue QR login. Create a new code and try again.";
-  }
-  return "Something went wrong. Check your connection and try again.";
-}
 
 async function send<T = void>(request: BackgroundRequest): Promise<T> {
   const response = await chrome.runtime.sendMessage(request) as BackgroundResponse<T>;

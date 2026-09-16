@@ -55,6 +55,7 @@ export interface SyncState {
   total: number;
   lastRunAt?: number;
   lastError?: string;
+  lastWarning?: string;
   automaticRetryPending?: boolean;
 }
 

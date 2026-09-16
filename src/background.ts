@@ -651,6 +651,8 @@ async function previewSocialSync(provider: SocialProvider, limit?: number): Prom
   syncCancellationRequested = false;
   state.sync = {
     ...state.sync,
+    lastError: undefined,
+    lastWarning: undefined,
     running: true,
     startedAt: Date.now(),
     provider,
@@ -890,7 +892,7 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
         }
         if (!syncCancellationRequested) {
           await markProviderSynced(sourceKey, items.map((item) => item.url));
-          if (needsBackfill) {
+          if (needsBackfill && !(await getState()).sync.lastWarning) {
             const recovered = await getState();
             recovered.recoveredImportSources = { ...recovered.recoveredImportSources, [sourceKey]: true };
             await setState(recovered);
@@ -1092,11 +1094,16 @@ async function collectProvider(
       func: collectSocialItemsInPage,
       args: [provider, limit, COLLECTION_BUDGET_MS, stopUrls],
     });
-    const result = results[0]?.result as { ok: boolean; items?: SocialItem[]; error?: string } | undefined;
+    const result = results[0]?.result as { ok: boolean; items?: SocialItem[]; error?: string; warning?: string } | undefined;
     if (!result?.ok) {
       throw new Error(
         result?.error || `Could not read ${providerLabel(provider, settings)} saves. Make sure you are logged in.`,
       );
+    }
+    if (result.warning) {
+      const latest = await getState();
+      latest.sync.lastWarning = result.warning;
+      await setState(latest);
     }
     const items = deduplicateSocialItems(result.items ?? []);
     return limit > 0 ? items.slice(0, limit) : items;
@@ -1157,7 +1164,8 @@ function collectSocialItemsInPage(
   limit: number,
   budgetMs: number,
   stopUrls: string[],
-): Promise<{ ok: boolean; items?: SocialItem[]; error?: string }> {
+): Promise<{ ok: boolean; items?: SocialItem[]; error?: string; warning?: string }> {
+  let warning: string | undefined;
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   // Same intent as jitteredDelayMs in shared.ts, re-declared because this
   // function is serialized into the page: evenly spaced scrolling reads as
@@ -1230,7 +1238,7 @@ function collectSocialItemsInPage(
         if (id && type !== "ALL_MEDIA_AUTO_COLLECTION" && !/^audio$/i.test(title)) folders.push({ id, title });
       }
     } catch {
-      throw new Error("Instagram folders could not be loaded. Reopen Instagram and retry so folder memberships are preserved.");
+      warning = "Instagram folders could not be loaded. Importing All saved without folder memberships. You can rescan later to sync folders.";
     }
     folders.push({ id: "all-posts", title: "All saved" });
 
@@ -1359,7 +1367,7 @@ function collectSocialItemsInPage(
             : `No ${provider} saves were visible. Confirm you are logged in and have saved items.`,
         };
       }
-      return { ok: true, items };
+      return { ok: true, items, warning };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
