@@ -357,10 +357,11 @@ export function socialItemToOrbitItem(item: SocialItem): CreateOrbitItemRequest 
     title: item.title,
     summary: item.content?.slice(0, 500),
     content: item.content ? { text: item.content } : undefined,
-    tags: [platform, "imported-save", ...(item.collection ? [item.collection] : [])],
+    tags: [platform, "imported-save", ...socialCollections(item).map((name) => name.slice(0, 48))].slice(0, 12),
     metadata: {
       importer: "orbb-chrome-extension",
       collection: item.collection,
+      collections: socialCollections(item),
       coverImage: item.coverImage,
       idempotencyKey: item.importId ? `chrome-sync:${item.importId}` : undefined,
     },
@@ -410,6 +411,7 @@ export function mergeStoredState(value: Partial<StoredState>): StoredState {
     },
     activity: value.activity ?? [],
     capturedUrls: value.capturedUrls ?? [],
+    pendingImports: value.pendingImports ?? [],
     providerFirstSyncDone: value.providerFirstSyncDone ?? {},
     sourceNextDueAt: value.sourceNextDueAt ?? {},
     sync: { ...DEFAULT_STATE.sync, ...value.sync },
@@ -450,4 +452,47 @@ export function recoverInterruptedSync(state: StoredState): StoredState {
       automaticRetryPending: state.settings.enabled,
     },
   };
+}
+
+export function socialCollections(item: SocialItem): string[] {
+  return [...new Set([...(item.collections ?? []), ...(item.collection ? [item.collection] : [])])]
+    .filter((name) => name.trim() && name !== "All saved");
+}
+
+export function deduplicateSocialItems(items: SocialItem[]): SocialItem[] {
+  const found = new Map<string, SocialItem>();
+  for (const item of items) {
+    const url = normalizeSavedUrl(item.url);
+    if (!url) continue;
+    const previous = found.get(url);
+    found.set(url, { ...(previous ?? item), url,
+      collections: [...new Set([...(previous ? socialCollections(previous) : []), ...socialCollections(item)])],
+    });
+  }
+  return [...found.values()];
+}
+
+export function canImportSocialItem(item: SocialItem): boolean {
+  return !item.alreadySaved || socialCollections(item).length > 0;
+}
+
+/** Drain saved work independently of Instagram's newest-first stop markers. */
+export async function retryPendingImports(
+  pending: NonNullable<StoredState["pendingImports"]>,
+  provider: SocialProvider,
+  callbacks: {
+    save(item: SocialItem): Promise<unknown>;
+    remove(url: string): Promise<void>;
+    fail(item: SocialItem, error: string): Promise<void>;
+  },
+): Promise<void> {
+  for (const { item } of pending.filter((entry) => entry.item.platform === provider)) {
+    try {
+      await callbacks.save(item);
+      await callbacks.remove(item.url);
+    } catch (error) {
+      await callbacks.fail(item, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
 }

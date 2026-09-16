@@ -1,6 +1,7 @@
 import QRCode from "qrcode";
 import type { CreateOrbitItemRequest } from "@orbb/orbit-sdk";
 import {
+  canImportSocialItem,
   extractDroppedHttpUrl,
   MAX_DROP_BYTES,
   MAX_INSTAGRAM_SOURCES,
@@ -613,7 +614,7 @@ async function cancelSync(): Promise<void> {
 function openSyncPreview(provider: SocialProvider, items: SocialItem[]): void {
   previewProvider = provider;
   previewItems = items.map((item) => ({ ...item, importId: item.importId || crypto.randomUUID() }));
-  selectedPreviewUrls = new Set(previewItems.filter((item) => !item.alreadySaved).map((item) => item.url));
+  selectedPreviewUrls = new Set(previewItems.filter((item) => canImportSocialItem(item)).map((item) => item.url));
   activeView = "preview";
   resetProgress(elements.previewProgress);
   elements.previewActionStatus.textContent = "";
@@ -667,12 +668,12 @@ function renderPreviewItems(): void {
     const title = document.createElement("strong");
     title.textContent = item.title;
     const detail = document.createElement("span");
-    detail.textContent = item.alreadySaved ? "Already in Orbb" : item.collection || hostFor(item.url);
+    detail.textContent = item.alreadySaved ? "Already in Orbb · sync folders" : item.collection || hostFor(item.url);
     copy.append(title, detail);
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = selectedPreviewUrls.has(item.url);
-    checkbox.disabled = Boolean(item.alreadySaved);
+    checkbox.disabled = !canImportSocialItem(item);
     checkbox.setAttribute("aria-label", `Save ${item.title}`);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) selectedPreviewUrls.add(item.url);
@@ -686,7 +687,7 @@ function renderPreviewItems(): void {
 }
 
 function togglePreviewSelection(): void {
-  const saveableItems = previewItems.filter((item) => !item.alreadySaved);
+  const saveableItems = previewItems.filter((item) => canImportSocialItem(item));
   const selectAll = selectedPreviewUrls.size !== saveableItems.length;
   selectedPreviewUrls = new Set(selectAll ? saveableItems.map((item) => item.url) : []);
   elements.previewList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {
@@ -699,7 +700,7 @@ function updatePreviewControls(): void {
   const selected = selectedPreviewUrls.size;
   const total = previewItems.length;
   const alreadySaved = previewItems.filter((item) => item.alreadySaved).length;
-  const saveable = total - alreadySaved;
+  const saveable = previewItems.filter(canImportSocialItem).length;
   elements.previewToggleButton.disabled = saveable === 0;
   elements.previewBackButton.disabled = false;
   elements.previewList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {

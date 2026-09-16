@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   automaticSyncAlarmSchedule,
+  deduplicateSocialItems,
+  canImportSocialItem,
+  retryPendingImports,
   enqueuePendingRevocation,
   extractDroppedHttpUrl,
   instagramSavedPageForUsername,
@@ -385,4 +388,39 @@ test("defaults and preserves the per-provider first-sync markers", () => {
   assert.deepEqual(mergeStoredState({}).providerFirstSyncDone, {});
   const state = mergeStoredState({ providerFirstSyncDone: { instagram: true } });
   assert.deepEqual(state.providerFirstSyncDone, { instagram: true });
+});
+test("merges overlapping Instagram folders and allows repairing existing saves", () => {
+  const post = { platform: "instagram" as const, url: "https://www.instagram.com/p/ABC/", title: "Post" };
+  const [merged] = deduplicateSocialItems([
+    { ...post, collection: "Recipes" }, { ...post, collection: "Travel" }, { ...post, collection: "All saved" },
+  ]);
+  assert.ok(merged);
+  assert.deepEqual(merged.collections, ["Recipes", "Travel"]);
+  const request = socialItemToOrbitItem(merged);
+  assert.deepEqual(request.metadata?.collections, ["Recipes", "Travel"]);
+  assert.equal(canImportSocialItem({ ...merged, alreadySaved: true }), true);
+  assert.equal(canImportSocialItem({ ...post, collection: "All saved", alreadySaved: true }), false);
+});
+
+test("retains interrupted imports and their error through storage reload", () => {
+  const item = { platform: "instagram" as const, url: "https://www.instagram.com/p/ABC/", title: "Post" };
+  const state = mergeStoredState({ pendingImports: [{ item, error: "quota_exceeded" }] });
+  assert.deepEqual(mergeStoredState(JSON.parse(JSON.stringify(state))).pendingImports, [{ item, error: "quota_exceeded" }]);
+});
+
+test("retries older failed saves independently and retains work after another failure", async () => {
+  const items = ["OLDER1", "OLDER2"].map((id) => ({ platform: "instagram" as const, url: `https://www.instagram.com/p/${id}/`, title: id }));
+  let pending = items.map((item) => ({ item, error: "previous failure" }));
+  const saved: string[] = [];
+  const callbacks = {
+    save: async (item: typeof items[number]) => { if (item.title === "OLDER2") throw new Error("offline"); saved.push(item.url); },
+    remove: async (url: string) => { pending = pending.filter((entry) => entry.item.url !== url); },
+    fail: async (item: typeof items[number], error: string) => { pending = pending.map((entry) => entry.item.url === item.url ? { item, error } : entry); },
+  };
+  await assert.rejects(retryPendingImports(pending, "instagram", callbacks), /offline/);
+  assert.equal(saved.length, 1);
+  assert.deepEqual(pending, [{ item: items[1], error: "offline" }]);
+  await retryPendingImports(pending, "instagram", { ...callbacks, save: async (item) => { saved.push(item.url); } });
+  assert.equal(saved.length, 2);
+  assert.equal(pending.length, 0);
 });

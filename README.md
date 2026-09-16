@@ -17,7 +17,7 @@ A Manifest V3 Chrome extension that runs in Chrome’s side panel and saves cont
 Requires Node.js 22.13.0 or later.
 
 ```bash
-git clone https://github.com/OWNER/orbb-chrome-extension.git
+git clone https://github.com/targaryen1212/orbb-chrome-extension.git
 cd orbb-chrome-extension
 npm ci
 npm run check
@@ -69,3 +69,11 @@ npm run build:chrome
 ## License
 
 This project is available under the MIT License.
+
+## Release 1.2.4
+
+Instagram imports preserve named collection memberships, retry failed saves, and skip existing bookmarks without creating duplicates. Existing bookmarks may be revisited to attach collections. Previously synced Instagram sources receive one full recovery scan before returning to incremental sync. Keep Chrome running and remain signed into Instagram while importing.
+
+Download the release ZIP, extract it, and load the extracted folder through Chrome's **Load unpacked** option. GitHub releases do not automatically update Chrome Web Store installations.
+
+Build a release ZIP and checksum with `npm run package:release`.

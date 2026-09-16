@@ -66,6 +66,9 @@ export interface StoredState {
   settings: SyncSettings;
   activity: ActivityItem[];
   capturedUrls: string[];
+  libraryOwnerUid?: string;
+  recoveredImportSources?: Record<string, boolean>;
+  pendingImports?: Array<{ item: SocialItem; error?: string }>;
   /**
    * Sources whose seeding first sync completed; later runs stop at known items.
    * Keyed by source (a provider name, or one Instagram page URL).
@@ -95,6 +98,7 @@ export interface SocialItem {
   title: string;
   content?: string;
   collection?: string;
+  collections?: string[];
   coverImage?: string;
   importId?: string;
   alreadySaved?: boolean;

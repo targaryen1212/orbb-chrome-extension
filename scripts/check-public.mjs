@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -18,11 +19,16 @@ const [packageJson, manifest, readme] = await Promise.all([
 if (!packageJson.license || packageJson.license === "UNLICENSED") {
   failures.push("Set package.json license to the selected open-source license.");
 }
-if (packageJson.dependencies?.["@orbb/orbit-sdk"] !== "0.4.1") {
-  failures.push("Use the reviewed public @orbb/orbit-sdk@0.4.1 dependency.");
+if (packageJson.dependencies?.["@orbb/orbit-sdk"] !== "file:vendor/orbb-orbit-sdk-0.4.2.tgz") {
+  failures.push("Use the reviewed vendored @orbb/orbit-sdk@0.4.2 dependency.");
 }
 if (/\/Users\/|[A-Za-z]:\\\\Users\\\\/.test(readme)) {
   failures.push("README contains a machine-specific home directory.");
+}
+
+const sdkBytes = await readFile(resolve(root, "vendor/orbb-orbit-sdk-0.4.2.tgz"));
+if (createHash("sha256").update(sdkBytes).digest("hex") !== "9e3fb232eca07492068bddca959c3b55c3afaf4194d5b3b6fa18fce78b573564") {
+  failures.push("Vendored Orbit SDK checksum mismatch.");
 }
 
 const requiredHostPermissions = new Set(["https://api.orbb.app/*"]);
@@ -41,7 +47,7 @@ const tracked = execFileSync("git", ["ls-files", "."], {
   .split(/\r?\n/)
   .filter(Boolean);
 const forbiddenTracked = tracked.filter((file) =>
-  /^(?:dist|releases|vendor|artifacts)\//.test(file) ||
+  (/^(?:dist|releases|vendor|artifacts)\//.test(file) && !["vendor/orbb-orbit-sdk-0.4.2.tgz", "vendor/README.md"].includes(file)) ||
   /(?:^|\/)\.DS_Store$/.test(file) ||
   /^Screenshot .*\.(?:jpe?g|png)$/i.test(file),
 );

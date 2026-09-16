@@ -2,6 +2,9 @@ import { OrbitClient } from "@orbb/orbit-sdk";
 import type { CreateOrbitItemRequest } from "@orbb/orbit-sdk";
 import {
   DEFAULT_SETTINGS,
+  deduplicateSocialItems,
+  socialCollections,
+  retryPendingImports,
   FIRST_SYNC_SEED_COUNT,
   automaticSyncAlarmSchedule,
   enqueuePendingRevocation,
@@ -60,6 +63,8 @@ void chrome.storage.local
 const startupRecovery = recoverInterruptedSyncOnWorkerStart().catch(
   () => undefined,
 );
+let lastSaveAttemptAt = 0;
+
 void retryPendingRevocations().catch(() => undefined);
 // Every reason the worker wakes is also a chance to notice that scheduled
 // collection lost its alarm — a run stopped with the worker used to leave none
@@ -284,6 +289,13 @@ async function pollQrAuthOnce(): Promise<{ status: string; user?: AuthState["use
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
       throw new Error("Orbb V2 returned an invalid or expired access token.");
     }
+    if ((latest.libraryOwnerUid ?? latest.auth?.user.uid) !== result.user.uid) {
+      latest.capturedUrls = [];
+      latest.pendingImports = [];
+      latest.providerFirstSyncDone = {};
+      latest.recoveredImportSources = {};
+    }
+    latest.libraryOwnerUid = result.user.uid;
     latest.auth = {
       accessToken,
       expiresAt: expiresAtMs,
@@ -458,7 +470,8 @@ async function saveItem(
   const remotelySaved = dedupeUrl && !locallySaved && !options.knownNew
     ? (await client.bookmarks.findExistingUrls([dedupeUrl])).has(dedupeUrl)
     : false;
-  if (dedupeUrl && (locallySaved || remotelySaved)) {
+  const hasCollections = Array.isArray(item.metadata?.collections) && item.metadata.collections.length > 0;
+  if (dedupeUrl && (locallySaved || remotelySaved) && !hasCollections) {
     if (remotelySaved) {
       state.capturedUrls = [dedupeUrl, ...state.capturedUrls].slice(0, MAX_CAPTURED_URLS);
       await setState(state);
@@ -475,7 +488,11 @@ async function saveItem(
   }
 
   try {
-    await client.bookmarks.createItem(item);
+    // The backend permits 20 creates/minute; do not exhaust it during bulk imports.
+    await delay(Math.max(0, 3100 - (Date.now() - lastSaveAttemptAt)));
+    lastSaveAttemptAt = Date.now();
+    const result = await client.bookmarks.createItem(item);
+    if (result.replayed === true) return { saved: false, duplicate: true };
   } catch (error) {
     if (isAuthorizationRejection(error)) {
       await clearRejectedAuth(auth.accessToken);
@@ -704,84 +721,83 @@ async function saveSyncPreview(
     .filter((item) => item.platform === provider && isSocialPostUrl(provider, item.url)));
   if (items.length === 0) throw new Error("Select at least one captured item to save.");
 
-  state.sync = {
-    ...state.sync,
-    running: true,
-    startedAt: Date.now(),
-    provider,
-    completed: 0,
-    total: items.length,
-  };
+  syncCancellationRequested = false;
+  state.sync = { ...state.sync, running: true, startedAt: Date.now(), provider, completed: 0, total: items.length };
   await setState(state);
-  let existingUrls: Set<string>;
   try {
-    existingUrls = await existingSourceUrls(items.map((item) => item.url));
-  } catch (error) {
+    await queuePendingImports(items);
+    const existingUrls = await existingSourceUrls(items.map((item) => item.url));
+    let saved = 0;
+    let skipped = 0;
+    let failed = 0;
+    const completedUrls: string[] = [];
+    for (const [index, item] of items.entries()) {
+      if (syncCancellationRequested) { failed += items.length - index; break; }
+      const normalized = normalizeSavedUrl(item.url);
+      if (!normalized) {
+        failed += 1;
+      } else {
+        if ((existingUrls.has(normalized) || item.alreadySaved) && socialCollections(item).length === 0) {
+          skipped += 1;
+          completedUrls.push(normalized);
+        } else {
+          try {
+            const result = await saveItem(socialItemToOrbitItem({ ...item, url: normalized }), {
+              dedupeUrl: normalized,
+              recordActivity: false,
+              knownNew: true,
+            });
+            if (result.duplicate) skipped += 1;
+            else saved += 1;
+            completedUrls.push(normalized);
+          } catch (error) {
+            failed += 1;
+            await recordPendingImport(item, error instanceof Error ? error.message : String(error));
+            const status = (error as { status?: number }).status;
+            if (status === 429 || status === 401 || status === 403) {
+              failed += items.length - index - 1;
+              break;
+            }
+          }
+        }
+        if (completedUrls.includes(normalized)) await clearPendingImport(normalized);
+      }
+      state = await getState();
+      state.sync.completed = saved + skipped + failed;
+      state.sync.startedAt = Date.now();
+      await setState(state);
+      await delay(jitteredDelayMs(150));
+    }
+
+    const result = { total: items.length, saved, skipped, failed };
+    // A manual import is as good a baseline as an automatic seed: only the
+    // successfully handled URLs become stop markers, so failed items are
+    // re-collected next time instead of being skipped over.
+    await markProviderSynced(provider, completedUrls);
+    await addActivity({
+      title: `${providerLabel(provider, state.settings)} manual import ${failed ? "finished with errors" : "complete"}`,
+      detail: `${saved} saved${skipped ? `, ${skipped} already in Orbb` : ""}${failed ? `, ${failed} failed` : ""}`,
+      platform: provider,
+      status: failed ? "failed" : "saved",
+    });
     state = await getState();
     state.sync = {
       ...state.sync,
       running: false,
-      startedAt: undefined,
       provider: undefined,
-      lastError: error instanceof Error ? error.message : String(error),
+      lastRunAt: Date.now(),
+      completed: saved + skipped + failed,
+      lastError: failed ? `${failed} item${failed === 1 ? "" : "s"} failed to save. ${state.pendingImports?.find((entry) => entry.error)?.error ?? "Pending items will be retried."}` : undefined,
+      automaticRetryPending: Boolean(state.pendingImports?.length),
     };
     await setState(state);
+    return result;
+  } catch (error) {
+    const latest = await getState();
+    latest.sync = { ...latest.sync, running: false, provider: undefined, automaticRetryPending: Boolean(latest.pendingImports?.length), lastError: error instanceof Error ? error.message : String(error) };
+    await setState(latest);
     throw error;
   }
-  let saved = 0;
-  let skipped = 0;
-  let failed = 0;
-  const completedUrls: string[] = [];
-  for (const item of items) {
-    const normalized = normalizeSavedUrl(item.url);
-    if (!normalized) {
-      failed += 1;
-    } else {
-      if (existingUrls.has(normalized) || item.alreadySaved) {
-        skipped += 1;
-        completedUrls.push(normalized);
-      } else {
-        try {
-          await saveItem(socialItemToOrbitItem({ ...item, url: normalized }), {
-            dedupeUrl: normalized,
-            recordActivity: false,
-            knownNew: true,
-          });
-          saved += 1;
-          completedUrls.push(normalized);
-        } catch {
-          failed += 1;
-        }
-      }
-    }
-    state = await getState();
-    state.sync.completed = saved + skipped + failed;
-    await setState(state);
-    await delay(jitteredDelayMs(150));
-  }
-
-  const result = { total: items.length, saved, skipped, failed };
-  // A manual import is as good a baseline as an automatic seed: only the
-  // successfully handled URLs become stop markers, so failed items are
-  // re-collected next time instead of being skipped over.
-  await markProviderSynced(provider, completedUrls);
-  await addActivity({
-    title: `${providerLabel(provider, state.settings)} manual import ${failed ? "finished with errors" : "complete"}`,
-    detail: `${saved} saved${skipped ? `, ${skipped} already in Orbb` : ""}${failed ? `, ${failed} failed` : ""}`,
-    platform: provider,
-    status: failed ? "failed" : "saved",
-  });
-  state = await getState();
-  state.sync = {
-    ...state.sync,
-    running: false,
-    startedAt: undefined,
-    provider: undefined,
-    lastRunAt: Date.now(),
-    lastError: failed ? `${failed} item${failed === 1 ? "" : "s"} failed to save.` : undefined,
-  };
-  await setState(state);
-  return result;
 }
 
 async function runAutomaticSync(): Promise<StoredState["sync"]> {
@@ -829,7 +845,20 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
         const stopUrls = firstRun
           ? []
           : state.capturedUrls.filter((url) => isSocialPostUrl(provider, url));
-        const items = await collectProvider(provider, state.settings, providerLimit, stopUrls, sourceUrl);
+        // Retry durable failures before scanning newest-first stop markers.
+        let recoveredCount = 0;
+        await retryPendingImports(state.pendingImports ?? [], provider, {
+          save: async (item) => {
+            if (syncCancellationRequested) throw new Error("Sync cancelled.");
+            await saveItem(socialItemToOrbitItem(item), { dedupeUrl: item.url, recordActivity: false });
+            recoveredCount += 1;
+          },
+          remove: clearPendingImport,
+          fail: recordPendingImport,
+        });
+        const needsBackfill = provider === "instagram" && !firstRun && !state.recoveredImportSources?.[sourceKey];
+        const items = await collectProvider(provider, state.settings, needsBackfill ? 0 : providerLimit, needsBackfill ? [] : stopUrls, sourceUrl);
+        await queuePendingImports(items);
         const existingUrls = await existingSourceUrls(items.map((item) => item.url));
         let providerSaved = 0;
         let providerSkipped = 0;
@@ -841,29 +870,36 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
           if (syncCancellationRequested) break;
           const normalized = normalizeSavedUrl(item.url);
           if (!normalized) continue;
-          if (!existingUrls.has(normalized)) {
-            await saveItem(socialItemToOrbitItem({ ...item, url: normalized }), {
+          if (!existingUrls.has(normalized) || socialCollections(item).length > 0) {
+            const result = await saveItem(socialItemToOrbitItem({ ...item, url: normalized }), {
               dedupeUrl: normalized,
               recordActivity: false,
               knownNew: true,
             });
-            providerSaved += 1;
+            if (result.duplicate) providerSkipped += 1;
+            else providerSaved += 1;
           } else {
             providerSkipped += 1;
           }
+          await clearPendingImport(normalized);
           const progress = await getState();
           progress.sync.completed += 1;
+          progress.sync.startedAt = Date.now();
           await setState(progress);
           await delay(jitteredDelayMs(250));
         }
         if (!syncCancellationRequested) {
           await markProviderSynced(sourceKey, items.map((item) => item.url));
+          if (needsBackfill) {
+            const recovered = await getState();
+            recovered.recoveredImportSources = { ...recovered.recoveredImportSources, [sourceKey]: true };
+            await setState(recovered);
+          }
         }
+        if (syncCancellationRequested) break;
         await addActivity({
           title: `${providerLabel(provider, state.settings)} automatic sync complete`,
-          detail: firstRun
-            ? `Seeded the ${providerSaved} newest save${providerSaved === 1 ? "" : "s"}; future runs pick up where this left off`
-            : `${providerSaved} saved${providerSkipped ? `, ${providerSkipped} already in Orbb` : ""}`,
+          detail: `${providerSaved} saved${providerSkipped ? `, ${providerSkipped} already in Orbb` : ""}${recoveredCount ? `, ${recoveredCount} pending imports recovered` : ""}`,
           platform: provider,
           status: "saved",
         });
@@ -884,7 +920,7 @@ async function runAutomaticSync(): Promise<StoredState["sync"]> {
     }
 
     state = await getState();
-    const retryPending = failures.length > 0 || syncCancellationRequested;
+    const retryPending = failures.length > 0 || syncCancellationRequested || Boolean(state.pendingImports?.length);
     state.sync = {
       ...state.sync,
       running: false,
@@ -1194,7 +1230,7 @@ function collectSocialItemsInPage(
         if (id && type !== "ALL_MEDIA_AUTO_COLLECTION" && !/^audio$/i.test(title)) folders.push({ id, title });
       }
     } catch {
-      // Folder discovery is best effort; all saved posts remains available.
+      throw new Error("Instagram folders could not be loaded. Reopen Instagram and retry so folder memberships are preserved.");
     }
     folders.push({ id: "all-posts", title: "All saved" });
 
@@ -1220,8 +1256,7 @@ function collectSocialItemsInPage(
         try {
           data = await getJson(`${endpoint}?${params}`);
         } catch (error) {
-          if (folder.id === "all-posts" && items.length === 0) throw error;
-          break;
+          throw error;
         }
         for (const wrapped of data.items || []) {
           const media = wrapped.media || wrapped;
@@ -1230,7 +1265,7 @@ function collectSocialItemsInPage(
           const product = String(media.product_type || "").toLowerCase();
           const content = cleanContent(media.caption?.text || "");
           const postUrl = `https://www.instagram.com/${product === "clips" ? "reel" : "p"}/${code}/`;
-          if (isKnown(postUrl)) {
+          if (isKnown(postUrl) && folder.id === "all-posts") {
             reachedKnownItem = true;
             encounteredKnownItem = true;
             break;
@@ -1331,17 +1366,6 @@ function collectSocialItemsInPage(
   })();
 }
 
-function deduplicateSocialItems(items: SocialItem[]): SocialItem[] {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    const url = normalizeSavedUrl(item.url);
-    if (!url || seen.has(url)) return false;
-    seen.add(url);
-    item.url = url;
-    return true;
-  });
-}
-
 function waitForTab(tabId: number, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -1395,4 +1419,24 @@ async function setState(state: StoredState): Promise<void> {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function recordPendingImport(item: SocialItem, error?: string): Promise<void> {
+  const state = await getState();
+  state.pendingImports = [...(state.pendingImports ?? []).filter((entry) => entry.item.url !== item.url), { item, error }];
+  await setState(state);
+}
+
+async function clearPendingImport(url: string): Promise<void> {
+  const state = await getState();
+  state.pendingImports = (state.pendingImports ?? []).filter((entry) => entry.item.url !== url);
+  await setState(state);
+}
+
+async function queuePendingImports(items: SocialItem[]): Promise<void> {
+  const state = await getState();
+  const queued = new Map((state.pendingImports ?? []).map((entry) => [entry.item.url, entry]));
+  for (const item of items) queued.set(item.url, { item });
+  state.pendingImports = [...queued.values()];
+  await setState(state);
 }
